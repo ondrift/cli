@@ -1,0 +1,7 @@
+<?php
+{{ANNOTATION}}
+// The Drift SDK lives under the \Drift namespace (\Drift\secret, \Drift\nosql, …).
+
+function {{FUNC}}($req) {
+    return [200, "OK", ["hello" => "from drift"]];
+}

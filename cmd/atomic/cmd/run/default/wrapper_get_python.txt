@@ -1,0 +1,15 @@
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_vendor = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
+if os.path.isdir(_vendor):
+    sys.path.insert(0, _vendor)
+
+import drift
+from {{SOURCE}} import {{FUNC}}
+
+def handle(req):
+    status, message, payload = {{FUNC}}(req)
+    return {"status": status, "message": message, "payload": payload}
+
+if __name__ == "__main__":
+    drift.run(handle)

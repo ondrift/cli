@@ -1,0 +1,157 @@
+package main
+
+import (
+	"encoding/json"
+	"bufio"
+	"bytes"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+// Set via ldflags at build time
+var functionName string
+var functionMethod string
+var functionAuth string
+var functionElement string
+
+// ===== Panic Recovery Middleware =====
+func recoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("recovered from panic: %v", rec)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next(w, r)
+	}
+}
+
+// ===== Atomic Proxy Self-registration =====
+func selfRegisterToProxy(proxyURL, serverAddr, function string) error {
+	payload := map[string]string{
+		"url":    serverAddr,
+		"path":   function,
+		"method": functionMethod,
+		"auth":   functionAuth,
+	}
+	data, _ := json.Marshal(payload)
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	resp, err := client.Post(proxyURL+"/register", "application/json", bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to register to proxy: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("proxy returned non-OK status: %s", resp.Status)
+	}
+
+	log.Printf("successfully registered server to Atomic proxy at %s", proxyURL)
+	return nil
+}
+
+// ===== Log Shipping =====
+func flushLogs(proxyURL, function string, lines []string) {
+	payload := map[string]interface{}{
+		"function": function,
+		"lines":    lines,
+	}
+	data, _ := json.Marshal(payload)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(proxyURL+"/logs/ingest", "application/json", bytes.NewReader(data))
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
+}
+
+// ===== Main =====
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		log.Fatal("PORT environment variable is required")
+	}
+
+	proxyURL := os.Getenv("ATOMIC_PROXY_URL")
+	if proxyURL == "" {
+		log.Fatal("ATOMIC_PROXY_URL environment variable is required")
+	}
+	podName := os.Getenv("HOSTNAME")
+	parts := strings.Split(podName, "-")
+	serviceName := strings.Join(parts[0:2], "-") // "atomic-1"
+	address := fmt.Sprintf("http://%s:8000", serviceName)
+
+	registeredPath := functionName
+	if functionElement != "" {
+		registeredPath = functionElement + "/" + functionName
+	}
+
+	// ==== Self-register with Atomic proxy ====
+	if err := selfRegisterToProxy(proxyURL, address, registeredPath); err != nil {
+		log.Fatalf("server registration failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	os.Stderr = w
+
+	go func() {
+		scanner := bufio.NewScanner(r)
+		var batch []string
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				if len(batch) > 0 {
+					flushLogs(proxyURL, registeredPath, batch)
+					batch = batch[:0]
+				}
+			default:
+				if scanner.Scan() {
+					line := scanner.Text()
+					log.Println(line)
+					batch = append(batch, line)
+					if len(batch) >= 50 {
+						flushLogs(proxyURL, registeredPath, batch)
+						batch = batch[:0]
+					}
+				}
+			}
+		}
+	}()
+
+	mux.HandleFunc("{{ROUTE}}", recoveryMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+
+		status, message, data := {{FUNC}}()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  status,
+			"message": message,
+			"payload": data,
+		})
+	}))
+
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%s", port),
+		Handler: mux,
+	}
+
+	log.Printf("Starting server on port %s", port)
+	log.Fatal(server.ListenAndServe())
+}

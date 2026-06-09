@@ -1,0 +1,8 @@
+{{ANNOTATION}}
+require 'drift' # Drift.secret, Drift.nosql, Drift.blob, Drift.queue, Drift.cache, Drift.lock, Drift.jwt, Drift.log
+
+def {{FUNC}}(body, req)
+  name = body["name"].to_s
+  return [400, "Bad Request", { "error" => "name is required" }] if name.empty?
+  [201, "Created", { "hello" => name }]
+end

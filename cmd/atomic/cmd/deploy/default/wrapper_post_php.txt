@@ -1,0 +1,16 @@
+<?php
+$autoload = __DIR__ . '/vendor/autoload.php';
+if (file_exists($autoload)) { require_once $autoload; }
+
+require_once __DIR__ . '/{{SOURCE}}.php';
+
+function handle($req) {
+    $body = $req['body'] ?? [];
+    if (is_string($body) && $body !== '') {
+        $body = json_decode($body, true) ?? $body;
+    }
+    [$status, $message, $payload] = {{FUNC}}($body, $req);
+    return ['status' => $status, 'message' => $message, 'payload' => $payload];
+}
+
+\Drift\run('handle');

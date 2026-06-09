@@ -1,0 +1,11 @@
+{{ANNOTATION}}
+const drift = require('@ondrift/sdk'); // secrets, nosql, blobs, queues, cache, locks, jwt, httpRequest, log
+
+function {{FUNC}}(body, req) {
+    if (!body.name) {
+        return [400, 'Bad Request', { error: 'name is required' }];
+    }
+    return [201, 'Created', { hello: body.name }];
+}
+
+module.exports = { {{FUNC}} };

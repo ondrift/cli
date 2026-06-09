@@ -1,0 +1,14 @@
+# Build output
+/drift
+
+# Local secrets / env
+.env
+*.local
+
+# Go test/coverage artefacts
+*.test
+*.out
+coverage.*
+
+# Editor / OS
+.DS_Store

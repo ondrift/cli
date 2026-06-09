@@ -1,0 +1,13 @@
+const drift = require('@ondrift/sdk');
+const handler = require('./{{SOURCE}}');
+
+async function handle(req) {
+    const [status, message, payload] = await handler.{{FUNC}}(req);
+    return { status, message, payload };
+}
+
+if (require.main === module) {
+    drift.run(handle);
+}
+
+module.exports = { handle };

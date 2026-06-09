@@ -1,0 +1,32 @@
+# Load bundled gems. Bundler's setup.rb uses RbConfig::CONFIG["ruby_version"]
+# to build paths, but host Ruby version may differ from container Ruby.
+# Patch the version to match what was actually installed.
+vendor_dir = File.join(__dir__, 'vendor', 'bundle')
+if Dir.exist?(vendor_dir)
+  setup_rb = Dir.glob("#{vendor_dir}/**/bundler/setup.rb").first
+  if setup_rb
+    installed = Dir.glob("#{vendor_dir}/ruby/*/gems").map { |p| File.basename(File.dirname(p)) }.first
+    if installed
+      require 'rbconfig'
+      RbConfig::CONFIG["ruby_version"] = installed
+    end
+    require setup_rb
+  end
+end
+
+$LOAD_PATH.unshift(__dir__)
+
+require 'json'
+require 'drift'
+require '{{SOURCE}}'
+
+def handle(req)
+  body = req['body'] || {}
+  if body.is_a?(String) && !body.empty?
+    body = JSON.parse(body) rescue body
+  end
+  status, message, payload = {{FUNC}}(body, req)
+  { 'status' => status, 'message' => message, 'payload' => payload }
+end
+
+Drift.run(method(:handle))

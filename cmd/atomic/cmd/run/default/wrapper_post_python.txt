@@ -1,0 +1,18 @@
+import sys, os, json
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_vendor = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
+if os.path.isdir(_vendor):
+    sys.path.insert(0, _vendor)
+
+import drift
+from {{SOURCE}} import {{FUNC}}
+
+def handle(req):
+    body = req.get("body", {})
+    if isinstance(body, str) and body:
+        body = json.loads(body)
+    status, message, payload = {{FUNC}}(body, req)
+    return {"status": status, "message": message, "payload": payload}
+
+if __name__ == "__main__":
+    drift.run(handle)

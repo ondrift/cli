@@ -1,0 +1,13 @@
+mod {{SOURCE}};
+
+fn main() {
+    drift_sdk::run(|req| {
+        let body = req.get("body").cloned().unwrap_or(serde_json::Value::Null);
+        let (status, message, payload) = {{SOURCE}}::{{FUNC}}(body, req);
+        serde_json::json!({
+            "status": status,
+            "message": message,
+            "payload": payload
+        })
+    });
+}

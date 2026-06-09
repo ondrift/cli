@@ -1,0 +1,9 @@
+{{ANNOTATION}}
+import drift  # secrets, nosql, blobs, queues, cache, locks, jwt, http_request, log
+
+
+def {{FUNC}}(body, req):
+    name = body.get("name", "")
+    if not name:
+        return 400, "Bad Request", {"error": "name is required"}
+    return 201, "Created", {"hello": name}

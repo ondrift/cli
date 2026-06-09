@@ -1,0 +1,6 @@
+{{ANNOTATION}}
+import drift  # secrets, nosql, blobs, queues, cache, locks, jwt, http_request, log
+
+
+def {{FUNC}}(req):
+    return 200, "OK", {"hello": "from drift"}

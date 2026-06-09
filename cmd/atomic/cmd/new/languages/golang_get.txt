@@ -1,0 +1,13 @@
+{{ANNOTATION}}
+package main
+
+import (
+	drift "github.com/ondrift/sdk/go"
+)
+
+// {{FUNC}} handles the request and returns (status, message, payload, headers).
+// The Drift SDK is imported as `drift` (secrets, nosql, blobs, queues, cache,
+// locks, jwt, http_request, log).
+func {{FUNC}}(req drift.Request) (int, string, interface{}, map[string]string) {
+	return 200, "OK", map[string]any{"hello": "from drift"}, nil
+}
