@@ -18,7 +18,7 @@ import (
 // version is set at build time via:
 //
 //	go build -ldflags "-X main.version=v1.0.0"
-var version = "v1.0.0"
+var version = "v1.2.0"
 
 func main() {
 	rootCmd := &cobra.Command{
