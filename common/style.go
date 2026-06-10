@@ -20,6 +20,7 @@ const (
 	check  = "\x1b[38;2;16;185;129m"    // #10b981 — emerald (no bold)
 	hint   = "\x1b[38;2;106;153;85m"    // #6A9955 — VS Code "comment" green
 	blueHi = "\x1b[38;2;86;156;214m"    // #569CD6 — VS Code "keyword" blue
+	fail   = "\x1b[38;2;244;71;71m"     // #F44747 — VS Code "error" red
 )
 
 // IsStyleEnabled reports whether ANSI styling should be emitted. Styling is
@@ -59,6 +60,9 @@ func CanvasHeader() string { return style(canvas, "Canvas") }
 
 // Check returns a styled checkmark for successful items.
 func Check() string { return style(check, "✓") }
+
+// Cross returns a styled ✗ for failed items.
+func Cross() string { return style(fail, "✗") }
 
 // Hint styles a parenthetical hint string (e.g. source file annotation).
 func Hint(s string) string { return style(hint, s) }

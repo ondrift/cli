@@ -25,7 +25,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	atomic_cmd "github.com/ondrift/cli/cmd/atomic/cmd/deploy"
@@ -282,6 +284,12 @@ func waitForSliceReady(name string) error {
 
 // ─── Atomic ─────────────────────────────────────────────────────────
 
+// atomicJob is one function's resolved build inputs, captured in manifest order
+// so the parallel pool's results can be reported back in that same order.
+type atomicJob struct {
+	name, dir, element, display string
+}
+
 func applyAtomic(m *Manifest) error {
 	a := m.Slice.Atomic
 	if len(a.Functions) == 0 {
@@ -289,29 +297,108 @@ func applyAtomic(m *Manifest) error {
 	}
 
 	fmt.Printf("  %s\n", common.AtomicHeader())
-	for _, fn := range a.Functions {
+
+	// Resolve dir + display name for every function up front, preserving
+	// manifest order. The order drives the ordered result output below.
+	jobs := make([]atomicJob, len(a.Functions))
+	for i, fn := range a.Functions {
 		dir := fn.Dir
 		if dir == "" {
 			dir = filepath.Join("atomic", fn.Name)
 		}
 		dir = m.ResolvePath(dir)
-
-		meta, metaErr := atomic_common.ParseAtomicMetadataFromDir(dir)
-		displayName := meta.Path
-		if metaErr != nil || displayName == "" {
-			displayName = fn.Name
+		display := fn.Name
+		if meta, err := atomic_common.ParseAtomicMetadataFromDir(dir); err == nil && meta.Path != "" {
+			display = meta.Path
 		}
+		jobs[i] = atomicJob{name: fn.Name, dir: dir, element: fn.Element, display: display}
+	}
 
-		sp := common.StartSpinner("    ", displayName)
-		err := atomic_cmd.DeployFolder(dir, fn.Element, true)
-		sp.Stop()
-		if err != nil {
-			return fmt.Errorf("atomic deploy failed for %s: %w", fn.Name, err)
+	results := deployAtomicJobs(jobs)
+
+	// Ordered output: ✓ per success, ✗ per failure, in manifest order. Return
+	// the first failure with its real error so the deploy chain surfaces the
+	// actual rejection reason (CLAUDE.md), never a generic one. Unlike the old
+	// serial path, a mid-list failure no longer skips the functions after it —
+	// every function is attempted, and you see all failures at once.
+	var firstErr error
+	for i, j := range jobs {
+		if results[i] != nil {
+			fmt.Printf("    %s %s\n", common.Cross(), j.display)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("atomic deploy failed for %s: %w", j.name, results[i])
+			}
+			continue
 		}
-		fmt.Printf("    %s %s\n", common.Check(), displayName)
+		fmt.Printf("    %s %s\n", common.Check(), j.display)
+	}
+	if firstErr != nil {
+		return firstErr
 	}
 	fmt.Println()
 	return nil
+}
+
+// deployAtomicJobs builds and pushes every Atomic function concurrently,
+// bounded by a worker pool, returning each job's error (nil = success) in the
+// input order. The build path is concurrency-safe by design — each build
+// stages into its own tempdir and captures subprocess output rather than
+// streaming it (see build_go.go) — so the only shared surfaces are the spinner
+// and the results slice, both guarded here.
+//
+// Concurrency is capped: parallel Go/Rust compiles are CPU- and RAM-heavy, so
+// an unbounded fan-out would thrash a small box. Most of the wall-clock win
+// comes from overlapping the network-bound phases (SDK fetch, module tidy,
+// upload to the operator) across workers, not from raw compile parallelism.
+func deployAtomicJobs(jobs []atomicJob) []error {
+	return deployAtomicJobsWith(jobs, func(j atomicJob) error {
+		return atomic_cmd.DeployFolder(j.dir, j.element, true)
+	})
+}
+
+// deployAtomicJobsWith is the pool itself, with the deploy step injected so the
+// concurrency/ordering/error-surfacing contract is unit-testable without real
+// builds. deploy is invoked once per job, possibly concurrently.
+func deployAtomicJobsWith(jobs []atomicJob, deploy func(atomicJob) error) []error {
+	results := make([]error, len(jobs))
+
+	// One function: stay serial, with the spinner showing its real name.
+	if len(jobs) == 1 {
+		sp := common.StartSpinner("    ", jobs[0].display)
+		results[0] = deploy(jobs[0])
+		sp.Stop()
+		return results
+	}
+
+	workers := min(runtime.NumCPU(), 8, len(jobs))
+
+	// The spinner is single-line by contract, so progress is an aggregate
+	// (done/total) counter; the per-function lines print after Stop().
+	sp := common.StartSpinner("    ", fmt.Sprintf("Deploying %d functions… (0/%d)", len(jobs), len(jobs)))
+
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		done int
+	)
+	sem := make(chan struct{}, workers)
+	for i := range jobs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			err := deploy(jobs[i])
+			mu.Lock()
+			results[i] = err
+			done++
+			sp.Update(fmt.Sprintf("Deploying %d functions… (%d/%d)", len(jobs), done, len(jobs)))
+			mu.Unlock()
+		}(i)
+	}
+	wg.Wait()
+	sp.Stop()
+	return results
 }
 
 // ─── Backbone ───────────────────────────────────────────────────────
