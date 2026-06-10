@@ -98,13 +98,9 @@ func getDeployCmd() *cobra.Command {
 			start := time.Now()
 			fmt.Printf("\n  Deploying %s...\n\n", common.Highlight(m.Slice.Name))
 
-			if err := applyAtomic(m); err != nil {
-				return err
-			}
-			if err := applyBackbone(m); err != nil {
-				return err
-			}
-			if err := applyCanvas(m); err != nil {
+			// Atomic, Backbone, and Canvas are independent slice subsystems —
+			// deploy all three concurrently (wall-clock = slowest, not sum).
+			if err := applySliceTriad(m); err != nil {
 				return err
 			}
 			if err := applyDomains(m); err != nil {
@@ -290,13 +286,13 @@ type atomicJob struct {
 	name, dir, element, display string
 }
 
-func applyAtomic(m *Manifest) error {
+func applyAtomic(m *Manifest, out io.Writer) error {
 	a := m.Slice.Atomic
 	if len(a.Functions) == 0 {
 		return nil
 	}
 
-	fmt.Printf("  %s\n", common.AtomicHeader())
+	fmt.Fprintf(out, "  %s\n", common.AtomicHeader())
 
 	// Resolve dir + display name for every function up front, preserving
 	// manifest order. The order drives the ordered result output below.
@@ -324,19 +320,62 @@ func applyAtomic(m *Manifest) error {
 	var firstErr error
 	for i, j := range jobs {
 		if results[i] != nil {
-			fmt.Printf("    %s %s\n", common.Cross(), j.display)
+			fmt.Fprintf(out, "    %s %s\n", common.Cross(), j.display)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("atomic deploy failed for %s: %w", j.name, results[i])
 			}
 			continue
 		}
-		fmt.Printf("    %s %s\n", common.Check(), j.display)
+		fmt.Fprintf(out, "    %s %s\n", common.Check(), j.display)
 	}
 	if firstErr != nil {
 		return firstErr
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 	return nil
+}
+
+// applySliceTriad deploys the three independent slice subsystems — Atomic
+// functions, Backbone data, and Canvas sites — CONCURRENTLY. They touch
+// different parts of the slice and share no mutable state (each makes its own
+// stateless HTTP calls), so the wall-clock becomes the slowest of the three
+// instead of their sum. The spinner is single-line by contract, so concurrent
+// phases can't animate it: each phase buffers its own section, one aggregate
+// spinner runs while they work, then the sections print in a stable order
+// (Atomic → Backbone → Canvas). The first failure in that order is returned
+// with its real error; every phase is attempted so all failures are visible.
+func applySliceTriad(m *Manifest) error {
+	type phase struct {
+		fn  func(*Manifest, io.Writer) error
+		buf bytes.Buffer
+		err error
+	}
+	phases := []*phase{
+		{fn: applyAtomic},
+		{fn: applyBackbone},
+		{fn: applyCanvas},
+	}
+
+	sp := common.StartSpinner("  ", "Deploying Atomic, Backbone & Canvas…")
+	var wg sync.WaitGroup
+	for _, p := range phases {
+		wg.Add(1)
+		go func(p *phase) {
+			defer wg.Done()
+			p.err = p.fn(m, &p.buf)
+		}(p)
+	}
+	wg.Wait()
+	sp.Stop()
+
+	var firstErr error
+	for _, p := range phases {
+		fmt.Print(p.buf.String())
+		if p.err != nil && firstErr == nil {
+			firstErr = p.err
+		}
+	}
+	return firstErr
 }
 
 // deployAtomicJobs builds and pushes every Atomic function concurrently,
@@ -362,25 +401,20 @@ func deployAtomicJobs(jobs []atomicJob) []error {
 func deployAtomicJobsWith(jobs []atomicJob, deploy func(atomicJob) error) []error {
 	results := make([]error, len(jobs))
 
-	// One function: stay serial, with the spinner showing its real name.
+	// One function: just run it. Progress feedback comes from the caller's
+	// aggregate phase spinner; this returns results for ordered rendering.
 	if len(jobs) == 1 {
-		sp := common.StartSpinner("    ", jobs[0].display)
 		results[0] = deploy(jobs[0])
-		sp.Stop()
 		return results
 	}
 
 	workers := min(runtime.NumCPU(), 8, len(jobs))
 
-	// The spinner is single-line by contract, so progress is an aggregate
-	// (done/total) counter; the per-function lines print after Stop().
-	sp := common.StartSpinner("    ", fmt.Sprintf("Deploying %d functions… (0/%d)", len(jobs), len(jobs)))
-
-	var (
-		wg   sync.WaitGroup
-		mu   sync.Mutex
-		done int
-	)
+	// Each goroutine writes its own distinct results index, so no mutex is
+	// needed; the semaphore bounds concurrency. No spinner here — applyAtomic
+	// runs concurrently with Backbone/Canvas under one aggregate spinner, and a
+	// nested one would clobber the single-line terminal.
+	var wg sync.WaitGroup
 	sem := make(chan struct{}, workers)
 	for i := range jobs {
 		wg.Add(1)
@@ -388,38 +422,30 @@ func deployAtomicJobsWith(jobs []atomicJob, deploy func(atomicJob) error) []erro
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			err := deploy(jobs[i])
-			mu.Lock()
-			results[i] = err
-			done++
-			sp.Update(fmt.Sprintf("Deploying %d functions… (%d/%d)", len(jobs), done, len(jobs)))
-			mu.Unlock()
+			results[i] = deploy(jobs[i])
 		}(i)
 	}
 	wg.Wait()
-	sp.Stop()
 	return results
 }
 
 // ─── Backbone ───────────────────────────────────────────────────────
 
-func applyBackbone(m *Manifest) error {
+func applyBackbone(m *Manifest, out io.Writer) error {
 	b := m.Slice.Backbone
 	if len(b.NoSQL)+len(b.Queues)+len(b.Cache)+len(b.Secrets) == 0 {
 		return nil
 	}
 
-	fmt.Printf("  %s\n", common.BackboneHeader())
+	fmt.Fprintf(out, "  %s\n", common.BackboneHeader())
 
 	for key, e := range b.Cache {
 		label := fmt.Sprintf("Cache: %s", key)
-		sp := common.StartSpinner("    ", label)
 		var value string
 		var hint string
 		if e.File != "" {
 			raw, err := os.ReadFile(m.ResolvePath(e.File)) // #nosec G304
 			if err != nil {
-				sp.Stop()
 				return fmt.Errorf("cache %q: read file %s: %w", key, e.File, err)
 			}
 			value = string(raw)
@@ -428,100 +454,85 @@ func applyBackbone(m *Manifest) error {
 			value = e.Value
 		}
 		if err := cacheSet(key, value, e.TTL); err != nil {
-			sp.Stop()
 			return fmt.Errorf("cache set %q failed: %w", key, err)
 		}
-		sp.Stop()
 		line := fmt.Sprintf("    %s %s", common.Check(), label)
 		if hint != "" {
 			line += " " + common.Hint(hint)
 		}
-		fmt.Println(line)
+		fmt.Fprintln(out, line)
 	}
 
 	for _, c := range b.NoSQL {
 		label := fmt.Sprintf("NoSQL: %s", c.Name)
-		sp := common.StartSpinner("    ", label)
 		if err := nosqlInit(c.Name); err != nil {
-			sp.Stop()
 			return fmt.Errorf("nosql init %q failed: %w", c.Name, err)
 		}
 		seeded := 0
 		if c.Seed != "" {
 			n, err := nosqlSeedJSONL(c.Name, m.ResolvePath(c.Seed))
 			if err != nil {
-				sp.Stop()
 				return fmt.Errorf("nosql seed %q failed: %w", c.Name, err)
 			}
 			seeded = n
 		}
-		sp.Stop()
 		line := fmt.Sprintf("    %s %s", common.Check(), label)
 		if seeded > 0 {
 			line += " " + common.Hint(fmt.Sprintf("(seeded %d docs)", seeded))
 		}
-		fmt.Println(line)
+		fmt.Fprintln(out, line)
 	}
 
 	for _, q := range b.Queues {
 		label := fmt.Sprintf("Queue: %s", q)
-		sp := common.StartSpinner("    ", label)
 		if err := queueInit(q); err != nil {
-			sp.Stop()
 			return fmt.Errorf("queue init %q failed: %w", q, err)
 		}
-		sp.Stop()
-		fmt.Printf("    %s %s\n", common.Check(), label)
+		fmt.Fprintf(out, "    %s %s\n", common.Check(), label)
 	}
 
 	if len(b.Secrets) > 0 {
-		sp := common.StartSpinner("    ", "Secrets: injecting…")
 		injected := 0
 		for k, v := range b.Secrets {
 			if err := secretSet(k, v); err != nil {
-				sp.Stop()
 				return fmt.Errorf("secret set %q failed: %w", k, err)
 			}
 			injected++
 		}
-		sp.Stop()
 		if injected > 0 {
-			fmt.Printf("    %s Secrets: %d injected\n", common.Check(), injected)
+			fmt.Fprintf(out, "    %s Secrets: %d injected\n", common.Check(), injected)
 		}
 	}
 
-	fmt.Println()
+	fmt.Fprintln(out)
 	return nil
 }
 
 // ─── Canvas ─────────────────────────────────────────────────────────
 
-func applyCanvas(m *Manifest) error {
+func applyCanvas(m *Manifest, out io.Writer) error {
 	sites := m.Slice.Canvas.Sites
 	if len(sites) == 0 {
 		return nil
 	}
 
-	fmt.Printf("  %s\n", common.CanvasHeader())
+	fmt.Fprintf(out, "  %s\n", common.CanvasHeader())
 	keep := make([]string, 0, len(sites))
 	for _, s := range sites {
 		dir := m.ResolvePath(s.Dir)
 		route := canonicalRoute(s.Route)
 		slug := SlugifyRoute(route)
 		label := fmt.Sprintf("%s → %s", s.Dir, route)
-		sp := common.StartSpinner("    ", label)
 		if err := deployCanvas(dir, slug, route); err != nil {
-			sp.Stop()
 			return fmt.Errorf("canvas deploy failed for %s: %w", s.Dir, err)
 		}
-		sp.Stop()
-		fmt.Printf("    %s %s\n", common.Check(), label)
+		fmt.Fprintf(out, "    %s %s\n", common.Check(), label)
 		keep = append(keep, slug)
 	}
 	if err := pruneCanvas(keep); err != nil {
 		return fmt.Errorf("canvas prune failed: %w", err)
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 	return nil
 }
 

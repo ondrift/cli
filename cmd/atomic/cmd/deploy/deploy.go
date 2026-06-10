@@ -429,22 +429,36 @@ func sendSourceToOperator(name, method, language, auth, element, stream string, 
 		return fmt.Errorf("failed to finalize multipart: %w", err)
 	}
 
-	resp, err := common.DoRequestWithContentType(
-		http.MethodPost,
-		common.APIBaseURL+"/ops/atomic",
-		mw.FormDataContentType(),
-		&buf,
-	)
-	if err != nil {
-		return common.TransportError("deploy the function", err)
+	// The operator serializes atomic deploys per slice behind a non-blocking
+	// lock — that lock is what makes the function-quota check atomic (count →
+	// compare to limit → assign slot, all as one critical section). When
+	// `drift project deploy` builds functions in parallel and they reach the
+	// deploy step together, the losers get 409 "another deploy in progress".
+	// Retry those (with backoff) so they serialize through the lock instead of
+	// failing spuriously. A 429 (function limit reached) is a REAL rejection
+	// from inside that critical section — never retried; it surfaces as-is.
+	bodyBytes := buf.Bytes()
+	contentType := mw.FormDataContentType()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		resp, err := common.DoRequestWithContentType(
+			http.MethodPost,
+			common.APIBaseURL+"/ops/atomic",
+			contentType,
+			bytes.NewReader(bodyBytes),
+		)
+		if err != nil {
+			return common.TransportError("deploy the function", err)
+		}
+		if resp.StatusCode == http.StatusConflict && time.Now().Before(deadline) {
+			resp.Body.Close() // #nosec G104 -- retrying; body discarded intentionally
+			time.Sleep(250 * time.Millisecond)
+			continue
+		}
+		_, cerr := common.CheckResponse(resp, "deploy the function")
+		resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited
+		return cerr
 	}
-	defer resp.Body.Close()
-
-	if _, err := common.CheckResponse(resp, "deploy the function"); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // DeployFolder builds and deploys the atomic function at folder. It is
