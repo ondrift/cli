@@ -20,6 +20,7 @@ func GetCmd() *cobra.Command {
 		getRestartCmd(),
 		getSnapshotCmd(),
 		getDomainCmd(),
+		getAuthCmd(),
 	)
 	return cmd
 }
