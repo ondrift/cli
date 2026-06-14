@@ -5,10 +5,19 @@ vendor_dir = File.join(__dir__, 'vendor', 'bundle')
 if Dir.exist?(vendor_dir)
   setup_rb = Dir.glob("#{vendor_dir}/**/bundler/setup.rb").first
   if setup_rb
-    installed = Dir.glob("#{vendor_dir}/ruby/*/gems").map { |p| File.basename(File.dirname(p)) }.first
+    # Detect the vendored ruby version from the `ruby/<version>` dir directly.
+    # (The old `ruby/*/gems` glob missed git-only bundles, where gems live under
+    # `ruby/<version>/bundler/gems` and no `ruby/<version>/gems` dir exists — so
+    # the version was never patched and setup.rb built paths for the wrong ruby.)
+    installed = Dir.glob("#{vendor_dir}/ruby/*").select { |p| File.directory?(p) && File.basename(p) =~ /\A\d/ }.map { |p| File.basename(p) }.first
     if installed
       require 'rbconfig'
       RbConfig::CONFIG["ruby_version"] = installed
+      # setup.rb builds its load paths from Gem.ruby_api_version (the REAL
+      # rubygems method = running ruby's version), not RbConfig — so the
+      # RbConfig patch above is insufficient when host ruby != container ruby.
+      # Override the method so setup.rb points at the actually-vendored version.
+      Gem.define_singleton_method(:ruby_api_version) { installed } if defined?(Gem)
     end
     require setup_rb
   end
