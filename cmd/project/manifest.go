@@ -149,14 +149,18 @@ type AlertEntry struct {
 }
 
 type BackboneSection struct {
-	NoSQLStorage  string                `yaml:"nosql_storage"`
-	BlobMaxSize   string                `yaml:"blob_max_size"`
-	BlobMaxCount  int                   `yaml:"blob_max_count"`
-	QueueMaxDepth int                   `yaml:"queue_max_depth"`
-	NoSQL         []NoSQLEntry          `yaml:"nosql"`
-	Queues        []string              `yaml:"queues"`
-	Cache         map[string]CacheEntry `yaml:"cache"`
-	Secrets       map[string]string     `yaml:"secrets"`
+	NoSQLStorage  string `yaml:"nosql_storage"`
+	BlobMaxSize   string `yaml:"blob_max_size"`
+	BlobMaxCount  int    `yaml:"blob_max_count"`
+	QueueMaxDepth int    `yaml:"queue_max_depth"`
+	// RealtimeConnections caps simultaneous live realtime WebSocket
+	// connections across the slice (the live pub/sub primitive). Billed in
+	// 50-connection blocks; 0 (omitted) means realtime is off for this slice.
+	RealtimeConnections int                   `yaml:"realtime_connections"`
+	NoSQL               []NoSQLEntry          `yaml:"nosql"`
+	Queues              []string              `yaml:"queues"`
+	Cache               map[string]CacheEntry `yaml:"cache"`
+	Secrets             map[string]string     `yaml:"secrets"`
 
 	// SQL declares per-slice SQLite databases. Each entry becomes a
 	// `.db` file.
@@ -549,6 +553,9 @@ func validate(m *Manifest) ParseErrors {
 	}
 	if b.QueueMaxDepth < 0 {
 		errs = append(errs, fmt.Sprintf("slice.backbone.queue_max_depth %d must be a positive integer", b.QueueMaxDepth))
+	}
+	if b.RealtimeConnections < 0 {
+		errs = append(errs, fmt.Sprintf("slice.backbone.realtime_connections %d must be a positive integer", b.RealtimeConnections))
 	}
 
 	// nosql collections

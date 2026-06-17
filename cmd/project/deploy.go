@@ -41,6 +41,12 @@ import (
 // looks for `./Driftfile` and nowhere else.
 const driftfileName = "Driftfile"
 
+// atomicForce, when set by --force, makes applyAtomic redeploy every function
+// regardless of whether its source digest matches what's already deployed.
+// Bound directly to the flag in getDeployCmd; read in applyAtomic, which runs
+// concurrently under applySliceTriad and can't easily take extra parameters.
+var atomicForce bool
+
 func getDeployCmd() *cobra.Command {
 	var (
 		planOnly      bool
@@ -129,6 +135,7 @@ func getDeployCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&planOnly, "plan", false, "Print the slice diff and exit; do not deploy")
 	cmd.Flags().BoolVar(&noReconcile, "no-slice-reconcile", false, "Skip the slice diff; deploy code into the active slice as-is")
+	cmd.Flags().BoolVar(&atomicForce, "force", false, "Redeploy every function even if its source is unchanged")
 	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm the cost prompt (for CI)")
 	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period for new slices and grow operations")
 	cmd.Flags().StringVar(&envName, "env", "", "Sets ENV before parsing the Driftfile, so ${ENV} substitutes to this value (typical: staging, prod)")
@@ -310,26 +317,61 @@ func applyAtomic(m *Manifest, out io.Writer) error {
 		jobs[i] = atomicJob{name: fn.Name, dir: dir, element: fn.Element, display: display}
 	}
 
-	results := deployAtomicJobs(jobs)
+	// Skip functions whose source is unchanged versus what's deployed. The
+	// check is best-effort: if the deployed digests can't be fetched (brand-new
+	// slice, transient error) we deploy everything; --force skips it entirely.
+	// A skipped function does no build and no upload — the expensive part — so
+	// this is where the wall-clock is actually saved.
+	skip := make([]bool, len(jobs))
+	skipByDir := make(map[string]bool, len(jobs))
+	if !atomicForce {
+		if deployed, err := atomic_cmd.DeployedDigests(); err == nil {
+			for i, j := range jobs {
+				key, kErr := atomic_cmd.FunctionName(j.dir)
+				dig, dErr := atomic_cmd.FunctionDigest(j.dir, j.element)
+				if kErr == nil && dErr == nil && dig != "" && deployed[key] == dig {
+					skip[i] = true
+					skipByDir[j.dir] = true
+				}
+			}
+		}
+	}
 
-	// Ordered output: ✓ per success, ✗ per failure, in manifest order. Return
-	// the first failure with its real error so the deploy chain surfaces the
-	// actual rejection reason (CLAUDE.md), never a generic one. Unlike the old
-	// serial path, a mid-list failure no longer skips the functions after it —
-	// every function is attempted, and you see all failures at once.
+	results := deployAtomicJobsWith(jobs, func(j atomicJob) error {
+		if skipByDir[j.dir] {
+			return nil
+		}
+		return atomic_cmd.DeployFolder(j.dir, j.element, true)
+	})
+
+	// Ordered output: ✓ per success, ✓ … (unchanged) per skip, ✗ per failure,
+	// in manifest order. Return the first failure with its real error so the
+	// deploy chain surfaces the actual rejection reason (CLAUDE.md), never a
+	// generic one. Unlike the old serial path, a mid-list failure no longer
+	// skips the functions after it — every function is attempted, and you see
+	// all failures at once.
 	var firstErr error
+	deployedCount, skippedCount := 0, 0
 	for i, j := range jobs {
-		if results[i] != nil {
+		switch {
+		case results[i] != nil:
 			fmt.Fprintf(out, "    %s %s\n", common.Cross(), j.display)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("atomic deploy failed for %s: %w", j.name, results[i])
 			}
-			continue
+		case skip[i]:
+			fmt.Fprintf(out, "    %s %s %s\n", common.Check(), j.display, common.Hint("(unchanged)"))
+			skippedCount++
+		default:
+			fmt.Fprintf(out, "    %s %s\n", common.Check(), j.display)
+			deployedCount++
 		}
-		fmt.Fprintf(out, "    %s %s\n", common.Check(), j.display)
 	}
 	if firstErr != nil {
 		return firstErr
+	}
+	if skippedCount > 0 {
+		fmt.Fprintf(out, "    %s\n", common.Hint(fmt.Sprintf("%d deployed, %d unchanged", deployedCount, skippedCount)))
 	}
 	fmt.Fprintln(out)
 	return nil

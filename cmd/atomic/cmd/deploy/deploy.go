@@ -375,7 +375,7 @@ func createUserSourceArchive(absFolder, name string) (string, error) {
 	return archivePath, nil
 }
 
-func sendSourceToOperator(name, method, language, auth, element, stream string, secrets []string, sourcePath, userSourcePath string, triggers []TriggerSpec) error {
+func sendSourceToOperator(name, method, language, auth, element, stream string, secrets []string, sourcePath, userSourcePath string, triggers []TriggerSpec, digest string) error {
 	meta, err := json.Marshal(map[string]any{
 		"name":     name,
 		"method":   method,
@@ -385,6 +385,7 @@ func sendSourceToOperator(name, method, language, auth, element, stream string, 
 		"stream":   stream,
 		"secrets":  secrets,
 		"triggers": triggers,
+		"digest":   digest,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
@@ -596,7 +597,16 @@ func DeployFolder(folder, element string, quiet bool) error {
 		defer os.Remove(userSourcePath)
 	}
 
-	if err := sendSourceToOperator(name, method, language, auth, element, stream, secrets, sourcePath, userSourcePath, triggers); err != nil {
+	// Content fingerprint of this function's source, recorded with the deploy
+	// so a later `drift project deploy` can skip it if nothing changed.
+	// Best-effort: on error we send "" — the deploy still succeeds, it just
+	// won't be skippable next time (an empty digest never matches).
+	digest, dErr := FunctionDigest(absFolder, element)
+	if dErr != nil {
+		digest = ""
+	}
+
+	if err := sendSourceToOperator(name, method, language, auth, element, stream, secrets, sourcePath, userSourcePath, triggers, digest); err != nil {
 		return err
 	}
 
