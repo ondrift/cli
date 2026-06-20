@@ -109,6 +109,7 @@ type AtomicSection struct {
 	FunctionMemory  string        `yaml:"function_memory"`
 	FunctionTimeout string        `yaml:"function_timeout"`
 	RateLimit       string        `yaml:"rate_limit"`
+	DeployHistory   int           `yaml:"deploy_history"` // past deploys kept per function (rollback)
 	Functions       []AtomicEntry `yaml:"functions"`
 
 	// Egress declares the slice's outbound network posture.
@@ -150,9 +151,12 @@ type AlertEntry struct {
 
 type BackboneSection struct {
 	NoSQLStorage  string `yaml:"nosql_storage"`
+	SQLStorage    string `yaml:"sql_storage"` // storage per SQL database (e.g. "100MB")
 	BlobMaxSize   string `yaml:"blob_max_size"`
 	BlobMaxCount  int    `yaml:"blob_max_count"`
 	QueueMaxDepth int    `yaml:"queue_max_depth"`
+	SecretMaxSize string `yaml:"secret_max_size"` // max size of one secret value (e.g. "4KB")
+	Locks         int    `yaml:"locks"`           // max concurrent Backbone locks
 	// RealtimeConnections caps simultaneous live realtime WebSocket
 	// connections across the slice (the live pub/sub primitive). Billed in
 	// 50-connection blocks; 0 (omitted) means realtime is off for this slice.
@@ -388,6 +392,23 @@ func (n *NoSQLEntry) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// UnmarshalYAML accepts either a bare-string (database name → empty
+// database) or a map (the long form with name/schema/seed). This
+// mirrors nosql so `sql: [ledger]` and the long form both work.
+func (s *SQLEntry) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		s.Name = node.Value
+		return nil
+	}
+	type raw SQLEntry
+	var r raw
+	if err := node.Decode(&r); err != nil {
+		return err
+	}
+	*s = SQLEntry(r)
+	return nil
+}
+
 // UnmarshalYAML accepts either a bare-string (canvas directory) or a
 // map (the long form with dir/route).
 func (c *CanvasEntry) UnmarshalYAML(node *yaml.Node) error {
@@ -550,6 +571,18 @@ func validate(m *Manifest) ParseErrors {
 	}
 	if v := b.BlobMaxSize; v != "" && !sizeRe.MatchString(v) {
 		errs = append(errs, fmt.Sprintf("slice.backbone.blob_max_size %q must be an integer ending in KB, MB, or GB", v))
+	}
+	if v := b.SQLStorage; v != "" && !sizeRe.MatchString(v) {
+		errs = append(errs, fmt.Sprintf("slice.backbone.sql_storage %q must be an integer ending in KB, MB, or GB", v))
+	}
+	if v := b.SecretMaxSize; v != "" && !sizeRe.MatchString(v) {
+		errs = append(errs, fmt.Sprintf("slice.backbone.secret_max_size %q must be an integer ending in KB, MB, or GB", v))
+	}
+	if b.Locks < 0 {
+		errs = append(errs, "slice.backbone.locks must be >= 0")
+	}
+	if m.Slice.Atomic.DeployHistory < 0 {
+		errs = append(errs, "slice.atomic.deploy_history must be >= 0")
 	}
 	if b.QueueMaxDepth < 0 {
 		errs = append(errs, fmt.Sprintf("slice.backbone.queue_max_depth %d must be a positive integer", b.QueueMaxDepth))

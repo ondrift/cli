@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -78,6 +79,13 @@ func getDeployCmd() *cobra.Command {
 
 			m, err := ParseDriftfile(manifestPath)
 			if err != nil {
+				return err
+			}
+
+			// Loud, pre-network preflight: reject route collisions before the
+			// slice diff / cost-confirm, so a path clash fails immediately
+			// rather than mid-deploy after you've already paid the ceremony.
+			if err := checkRouteCollisions(m); err != nil {
 				return err
 			}
 
@@ -293,6 +301,57 @@ type atomicJob struct {
 	name, dir, element, display string
 }
 
+// checkRouteCollisions rejects a manifest in which two functions share a
+// deploy identity. A function's identity is its route PATH (for queues, the
+// folder name) — it is method-agnostic — so two functions on the same path
+// with different methods (e.g. get:items + post:items) would silently collide
+// on the slice: the last one deployed wins and shadows the other, and at
+// runtime the surviving handler answers BOTH verbs. We surface that here, up
+// front and offline, instead of letting it become a quiet mis-route in prod.
+func checkRouteCollisions(m *Manifest) error {
+	type routeRef struct{ fn, methodPath string }
+	byKey := map[string][]routeRef{}
+	for _, fn := range m.Slice.Atomic.Functions {
+		dir := fn.Dir
+		if dir == "" {
+			dir = filepath.Join("atomic", fn.Name)
+		}
+		dir = m.ResolvePath(dir)
+		key, err := atomic_cmd.FunctionName(dir)
+		if err != nil {
+			continue // a parse/metadata error surfaces later, in the deploy itself
+		}
+		mp := key
+		if meta, mErr := atomic_common.ParseAtomicMetadataFromDir(dir); mErr == nil && meta.Method != "" {
+			mp = strings.ToLower(meta.Method) + ":" + meta.Path
+		}
+		byKey[key] = append(byKey[key], routeRef{fn: fn.Name, methodPath: mp})
+	}
+
+	var collisions []string
+	for key, refs := range byKey {
+		if len(refs) < 2 {
+			continue
+		}
+		parts := make([]string, len(refs))
+		for i, r := range refs {
+			parts[i] = fmt.Sprintf("%s (%s)", r.fn, r.methodPath)
+		}
+		sort.Strings(parts)
+		collisions = append(collisions,
+			fmt.Sprintf("path %q is claimed by %d functions: %s", key, len(refs), strings.Join(parts, ", ")))
+	}
+	if len(collisions) == 0 {
+		return nil
+	}
+	sort.Strings(collisions)
+	return fmt.Errorf(
+		"route collision — these functions share a path and would shadow each other on deploy "+
+			"(a path identifies a function regardless of method, so give each a distinct path, "+
+			"e.g. get:items-list + post:items):\n  - %s",
+		strings.Join(collisions, "\n  - "))
+}
+
 func applyAtomic(m *Manifest, out io.Writer) error {
 	a := m.Slice.Atomic
 	if len(a.Functions) == 0 {
@@ -334,6 +393,10 @@ func applyAtomic(m *Manifest, out io.Writer) error {
 					skipByDir[j.dir] = true
 				}
 			}
+		} else {
+			// Best-effort: a slow/unreachable list endpoint must not stall the
+			// deploy. Say so, then deploy everything (nothing is marked skip).
+			fmt.Fprintf(out, "  %s couldn't check which functions are unchanged — deploying all\n", common.Hint("·"))
 		}
 	}
 

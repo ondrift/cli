@@ -18,9 +18,10 @@ func TestManifestToSliceConfig_Counts(t *testing.T) {
 				},
 			},
 			Backbone: BackboneSection{
-				NoSQL:   []NoSQLEntry{{Name: "x"}, {Name: "y"}},
-				Queues:  []string{"q1", "q2", "q3"},
-				Secrets: map[string]string{"A": "1", "B": "2"},
+				NoSQL:               []NoSQLEntry{{Name: "x"}, {Name: "y"}},
+				Queues:              []string{"q1", "q2", "q3"},
+				Secrets:             map[string]string{"A": "1", "B": "2"},
+				RealtimeConnections: 200,
 			},
 		},
 	}
@@ -42,6 +43,9 @@ func TestManifestToSliceConfig_Counts(t *testing.T) {
 	}
 	if cfg.Backbone.Secrets.MaxCount != 2 {
 		t.Errorf("secrets: got %d, want 2", cfg.Backbone.Secrets.MaxCount)
+	}
+	if cfg.Backbone.Realtime.MaxConcurrentConnections != 200 {
+		t.Errorf("realtime: got %d, want 200", cfg.Backbone.Realtime.MaxConcurrentConnections)
 	}
 }
 

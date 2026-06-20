@@ -60,12 +60,23 @@ type AtomicLimits struct {
 }
 
 type BackboneLimits struct {
-	Secrets             BackboneSecretsLimits `json:"secrets"`
-	Blobs               BackboneBlobsLimits   `json:"blobs"`
-	NoSQL               BackboneNoSQLLimits   `json:"nosql"`
-	Queues              BackboneQueuesLimits  `json:"queues"`
-	Locks               BackboneLocksLimits   `json:"locks"`
-	BackupRetentionDays int
+	Secrets  BackboneSecretsLimits  `json:"secrets"`
+	Blobs    BackboneBlobsLimits    `json:"blobs"`
+	NoSQL    BackboneNoSQLLimits    `json:"nosql"`
+	SQL      BackboneSQLLimits      `json:"sql"`
+	Queues   BackboneQueuesLimits   `json:"queues"`
+	Realtime BackboneRealtimeLimits `json:"realtime"`
+	Locks    BackboneLocksLimits    `json:"locks"`
+	// BackupRetentionDays needs its json tag — the platform model tags this
+	// leaf "backup_retention_days" (unlike the other Go-named leaves), so
+	// without it the value marshals as "BackupRetentionDays" and the server
+	// silently reads 0.
+	BackupRetentionDays int `json:"backup_retention_days"`
+}
+
+type BackboneSQLLimits struct {
+	MaxDatabases    int
+	MaxStorageBytes int
 }
 
 type BackboneSecretsLimits struct {
@@ -90,6 +101,10 @@ type BackboneQueuesLimits struct {
 
 type BackboneLocksLimits struct {
 	MaxConcurrent int
+}
+
+type BackboneRealtimeLimits struct {
+	MaxConcurrentConnections int
 }
 
 // ManifestToSliceConfig builds a SliceConfig from a parsed Driftfile.
@@ -120,17 +135,34 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 		cfg.Atomic.MaxNumberOfFunctions = len(m.Slice.Atomic.Functions)
 	}
 
-	scheduled := 0
-	for _, fn := range m.Slice.Atomic.Functions {
-		if fn.Cron != "" {
-			scheduled++
+	// Scheduled-job count comes from the source `@atomic cron=` directives —
+	// the authoritative place a schedule is declared — not the vestigial
+	// Driftfile functions[].cron field. Falls back to that field only when
+	// source isn't readable (manifest preflight before deploy), mirroring
+	// the function-count fallback above.
+	if sc, scErr := CountScheduledFunctions(m); scErr == nil {
+		cfg.Atomic.MaxNumberOfScheduledJobs = sc
+	} else {
+		scheduled := 0
+		for _, fn := range m.Slice.Atomic.Functions {
+			if fn.Cron != "" {
+				scheduled++
+			}
 		}
+		cfg.Atomic.MaxNumberOfScheduledJobs = scheduled
 	}
-	cfg.Atomic.MaxNumberOfScheduledJobs = scheduled
+	if v := m.Slice.Atomic.DeployHistory; v > 0 {
+		cfg.Atomic.MaxNumberOfDeploymentsInHistory = v
+	}
 
 	cfg.Backbone.NoSQL.MaxCollections = len(m.Slice.Backbone.NoSQL)
+	cfg.Backbone.SQL.MaxDatabases = len(m.Slice.Backbone.SQL)
 	cfg.Backbone.Queues.MaxQueues = len(m.Slice.Backbone.Queues)
 	cfg.Backbone.Secrets.MaxCount = len(m.Slice.Backbone.Secrets)
+
+	// Realtime is a scalar knob (a connection budget), not a list of named
+	// resources — declared directly. Omitted → 0 → realtime disabled.
+	cfg.Backbone.Realtime.MaxConcurrentConnections = m.Slice.Backbone.RealtimeConnections
 
 	// ── Atomic envelope knobs ───────────────────────────────────────
 	if v := m.Slice.Atomic.FunctionMemory; v != "" {
@@ -180,6 +212,25 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	}
 	if v := m.Slice.Backbone.QueueMaxDepth; v > 0 {
 		cfg.Backbone.Queues.MaxDepthEach = v
+	}
+	if v := m.Slice.Backbone.SQLStorage; v != "" {
+		bytes, err := parseSizeBytes(v)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("slice.backbone.sql_storage: %v", err))
+		} else {
+			cfg.Backbone.SQL.MaxStorageBytes = bytes
+		}
+	}
+	if v := m.Slice.Backbone.SecretMaxSize; v != "" {
+		bytes, err := parseSizeBytes(v)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("slice.backbone.secret_max_size: %v", err))
+		} else {
+			cfg.Backbone.Secrets.MaxSizeInBytesEach = bytes
+		}
+	}
+	if v := m.Slice.Backbone.Locks; v > 0 {
+		cfg.Backbone.Locks.MaxConcurrent = v
 	}
 
 	// ── Canvas envelope ─────────────────────────────────────────────

@@ -53,6 +53,7 @@ drift project deploy                   # …or deploy a whole app from a Driftfi
 | `drift slice restart` | Restart the active slice. |
 | `drift slice delete <name>` | Delete a slice (double confirmation). |
 | `drift slice domain add\|verify\|remove\|list <host>` | Attach and verify custom domains. |
+| `drift slice auth set\|list\|disable` | Put a username/password login in front of your site — a soft gate for not-public-yet sites (covers site pages, not `/api`). |
 | `drift slice snapshot create\|list\|download\|restore\|delete` | Portable backups — your data, with no Drift-specific files. |
 
 ### Atomic — serverless functions
@@ -91,7 +92,7 @@ drift project deploy                   # …or deploy a whole app from a Driftfi
 
 | Command | Description |
 |---------|-------------|
-| `drift project deploy` | Deploy an entire application from its `Driftfile`. |
+| `drift project deploy` | Deploy an entire application from its `Driftfile`. Functions whose source is unchanged since the last deploy are skipped automatically; pass `--force` to redeploy everything. |
 | `drift project diff` | Preview what a deploy would change (never shrinks a slice). |
 | `drift plan <Driftfile>` | Estimate the monthly price of a configuration. |
 

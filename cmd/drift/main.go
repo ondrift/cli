@@ -9,10 +9,12 @@ import (
 	atomic "github.com/ondrift/cli/cmd/atomic"
 	backbone "github.com/ondrift/cli/cmd/backbone"
 	canvas "github.com/ondrift/cli/cmd/canvas"
+	portal "github.com/ondrift/cli/cmd/portal"
 	project "github.com/ondrift/cli/cmd/project"
 	slice "github.com/ondrift/cli/cmd/slice"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // version is set at build time via:
@@ -27,6 +29,15 @@ func main() {
 		Version:       version,
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		Args:          cobra.NoArgs,
+		// Bare `drift` in a terminal launches the full-screen dashboard; in a
+		// pipe/CI (non-TTY) it falls back to help so scripts don't hang on a TUI.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				return cmd.Help()
+			}
+			return portal.Run()
+		},
 	}
 
 	rootCmd.AddGroup(&cobra.Group{
@@ -65,6 +76,9 @@ func main() {
 
 		// Account (signup, login, usage, upgrade)
 		account.GetAccountCmd(),
+
+		// Portal — interactive TUI dashboard over your slices/functions/data
+		portal.GetCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {

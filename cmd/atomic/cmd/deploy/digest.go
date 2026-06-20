@@ -13,6 +13,7 @@
 package atomic_cmd
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	atomic_common "github.com/ondrift/cli/cmd/atomic/common"
 	"github.com/ondrift/cli/common"
@@ -127,12 +129,22 @@ type deployedAtomic struct {
 	Digest       string `json:"digest"`
 }
 
+// deployedDigestsTimeout bounds the best-effort "what's already deployed?"
+// pre-check. It exists only to SKIP unchanged functions, so it must never
+// cost more than it saves: if the list endpoint is slow, we give up quickly
+// and deploy everything (the caller treats any error as "skip nothing")
+// rather than stalling the whole deploy on the default 30s client timeout.
+const deployedDigestsTimeout = 8 * time.Second
+
 // DeployedDigests returns function_name -> last-deployed source digest for the
 // active slice. `drift project deploy` uses it to skip functions whose source
 // is unchanged. Records with no recorded digest (deployed by an older CLI, or
 // after a rollback / snapshot restore) are omitted, so they always redeploy.
 func DeployedDigests() (map[string]string, error) {
-	resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/atomic/list", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), deployedDigestsTimeout)
+	defer cancel()
+
+	resp, err := common.DoRequestWithContext(ctx, http.MethodGet, common.APIBaseURL+"/ops/atomic/list", nil)
 	if err != nil {
 		return nil, common.TransportError("list atomic functions", err)
 	}

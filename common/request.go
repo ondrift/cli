@@ -2,6 +2,7 @@ package common
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,12 +13,16 @@ import (
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request, error) {
+	return newAuthenticatedRequestCtx(context.Background(), method, url, body)
+}
+
+func newAuthenticatedRequestCtx(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
 	token, _, err := GetTokenFromSession()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get token from session: %w", err)
 	}
 
-	req, err := http.NewRequest(method, url, body)
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, err
 	}
@@ -39,6 +44,14 @@ func DoRequest(method, url string, body io.Reader) (*http.Response, error) {
 	return DoRequestWithContentType(method, url, "", body)
 }
 
+// DoRequestWithContext is like DoRequest but binds the request (and its
+// post-refresh retry) to ctx. Use it for best-effort calls that must not
+// stall a command on the default 30s client timeout — pass a context with a
+// short deadline and treat a deadline error as "skip the optimization".
+func DoRequestWithContext(ctx context.Context, method, url string, body io.Reader) (*http.Response, error) {
+	return doRequestWithHeaders(ctx, method, url, body, nil)
+}
+
 // DoJSONRequest is a convenience wrapper for JSON request bodies.
 func DoJSONRequest(method, url string, body io.Reader) (*http.Response, error) {
 	return DoRequestWithContentType(method, url, "application/json", body)
@@ -58,6 +71,12 @@ func DoRequestWithContentType(method, url, contentType string, body io.Reader) (
 // DoRequestWithHeaders is like DoRequest but applies the given headers to
 // both the original request and the post-refresh retry.
 func DoRequestWithHeaders(method, url string, body io.Reader, headers map[string]string) (*http.Response, error) {
+	return doRequestWithHeaders(context.Background(), method, url, body, headers)
+}
+
+// doRequestWithHeaders is the context-aware core shared by all request
+// helpers. ctx bounds both the initial send and the post-refresh retry.
+func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reader, headers map[string]string) (*http.Response, error) {
 	var bodyBytes []byte
 	if body != nil {
 		var err error
@@ -68,7 +87,7 @@ func DoRequestWithHeaders(method, url string, body io.Reader, headers map[string
 	}
 
 	send := func() (*http.Response, error) {
-		req, err := NewAuthenticatedRequest(method, url, bytes.NewReader(bodyBytes))
+		req, err := newAuthenticatedRequestCtx(ctx, method, url, bytes.NewReader(bodyBytes))
 		if err != nil {
 			return nil, err
 		}

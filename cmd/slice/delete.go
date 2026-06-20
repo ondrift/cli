@@ -103,7 +103,7 @@ func sliceExists(name string) bool {
 		return true
 	}
 
-	var slices []sliceEntry
+	var slices []SliceEntry
 	if err := json.Unmarshal(body, &slices); err != nil {
 		return true
 	}

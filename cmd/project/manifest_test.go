@@ -3,6 +3,7 @@ package project
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -156,6 +157,40 @@ slice:
 	}
 }
 
+// TestParseDriftfile_SQLShorthandString verifies the bare-string SQL
+// shorthand parses (regression: SQLEntry used to reject `sql: [ledger]`
+// with "cannot unmarshal !!str into project.SQLEntry"). It mirrors the
+// nosql short form — a bare string is a database with no schema/seed,
+// created lazily on first use.
+func TestParseDriftfile_SQLShorthandString(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+slice:
+  name: hello
+  backbone:
+    sql:
+      - ledger
+      - name: audit
+        schema: ./sql/audit.sql
+  canvas: ./canvas
+`)
+	mustMkdir(t, filepath.Join(tmp, "canvas"))
+
+	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err != nil {
+		t.Fatalf("ParseDriftfile failed: %v", err)
+	}
+	if len(m.Slice.Backbone.SQL) != 2 {
+		t.Fatalf("backbone.sql count = %d, want 2", len(m.Slice.Backbone.SQL))
+	}
+	if m.Slice.Backbone.SQL[0].Name != "ledger" || m.Slice.Backbone.SQL[0].Schema != "" {
+		t.Errorf("sql[0] = %+v, want bare {Name: ledger}", m.Slice.Backbone.SQL[0])
+	}
+	if m.Slice.Backbone.SQL[1].Name != "audit" || m.Slice.Backbone.SQL[1].Schema != "./sql/audit.sql" {
+		t.Errorf("sql[1] = %+v, want {Name: audit, Schema: ./sql/audit.sql}", m.Slice.Backbone.SQL[1])
+	}
+}
+
 // writeRestaurantFixture writes a minimal-but-complete restaurant
 // project shape into a temp dir and returns the dir path. The
 // Driftfile content matches the canonical template under
@@ -188,6 +223,49 @@ slice:
 	mustMkdir(t, filepath.Join(tmp, "backbone"))
 	mustWrite(t, filepath.Join(tmp, "backbone", "menu.json"), `[]`)
 	return tmp
+}
+
+// TestCheckRouteCollisions flags two functions that share a route path
+// (the deploy identity is method-agnostic, so get:items + post:items would
+// shadow each other) and passes when the paths are distinct.
+func TestCheckRouteCollisions(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+slice:
+  name: shop
+  atomic:
+    - items-get
+    - items-post
+  canvas: ./canvas
+`)
+	mustMkdir(t, filepath.Join(tmp, "canvas"))
+	mustWrite(t, filepath.Join(tmp, "atomic", "items-get", "main.go"),
+		"// @atomic http=get:items auth=none\npackage main\n")
+	mustWrite(t, filepath.Join(tmp, "atomic", "items-post", "main.go"),
+		"// @atomic http=post:items auth=none\npackage main\n")
+
+	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err != nil {
+		t.Fatalf("ParseDriftfile failed: %v", err)
+	}
+	err = checkRouteCollisions(m)
+	if err == nil {
+		t.Fatal("expected a route collision error for get:items + post:items, got nil")
+	}
+	if !strings.Contains(err.Error(), "items") || !strings.Contains(err.Error(), "collision") {
+		t.Errorf("collision error should name the path: %v", err)
+	}
+
+	// Give the GET twin a distinct path — no collision.
+	mustWrite(t, filepath.Join(tmp, "atomic", "items-get", "main.go"),
+		"// @atomic http=get:items-list auth=none\npackage main\n")
+	m2, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err != nil {
+		t.Fatalf("ParseDriftfile failed: %v", err)
+	}
+	if err := checkRouteCollisions(m2); err != nil {
+		t.Errorf("distinct paths should not collide: %v", err)
+	}
 }
 
 func mustWrite(t *testing.T, path, content string) {

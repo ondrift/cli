@@ -12,6 +12,6 @@ func GetCmd() *cobra.Command {
 		GroupID: "services",
 	}
 
-	cmd.AddCommand(secretCmd(), blobCmd(), queueCmd(), lockCmd(), nosqlCmd(), cacheCmd(), statusCmd())
+	cmd.AddCommand(secretCmd(), blobCmd(), queueCmd(), lockCmd(), nosqlCmd(), sqlCmd(), cacheCmd(), statusCmd())
 	return cmd
 }
