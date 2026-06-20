@@ -353,6 +353,17 @@ func checkRouteCollisions(m *Manifest) error {
 }
 
 func applyAtomic(m *Manifest, out io.Writer) error {
+	// Element layout: if atomic/ holds a Default element (flat *.go) or any
+	// multi-function element, deploy via the element path. A pure legacy
+	// folder-per-function tree falls through to the unchanged path below.
+	elements, err := atomic_cmd.DiscoverElements(m.ResolvePath("atomic"))
+	if err != nil {
+		return err // mixed-language element, etc. — surface loudly
+	}
+	if shouldUseElementPath(elements) {
+		return applyAtomicElements(elements, out)
+	}
+
 	a := m.Slice.Atomic
 	if len(a.Functions) == 0 {
 		return nil
@@ -433,6 +444,102 @@ func applyAtomic(m *Manifest, out io.Writer) error {
 	if firstErr != nil {
 		return firstErr
 	}
+	if skippedCount > 0 {
+		fmt.Fprintf(out, "    %s\n", common.Hint(fmt.Sprintf("%d deployed, %d unchanged", deployedCount, skippedCount)))
+	}
+	fmt.Fprintln(out)
+	return nil
+}
+
+// shouldUseElementPath returns true when the new Element deploy path applies:
+// a flat Default element is present, or any element has more than one function.
+// A pure legacy tree (only single-function named folders) returns false and
+// uses the original parallel folder-per-function path, unchanged.
+func shouldUseElementPath(elements []atomic_cmd.Element) bool {
+	for _, el := range elements {
+		if el.Name == atomic_cmd.DefaultElementName || len(el.Funcs) > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// elementUnchanged reports whether every function in el already matches the
+// deployed digest (so the whole element can be skipped — no stage, no build).
+func elementUnchanged(el atomic_cmd.Element, digest string, deployed map[string]string) bool {
+	if digest == "" {
+		return false
+	}
+	for _, f := range el.Funcs {
+		if deployed[f.DeployKey()] != digest {
+			return false
+		}
+	}
+	return true
+}
+
+// applyAtomicElements deploys the project's Atomic functions Element by Element.
+// Each Go element is staged + dependency-resolved once, then every function is
+// compiled and shipped; an unchanged element is skipped wholesale.
+func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
+	fmt.Fprintf(out, "  %s\n", common.AtomicHeader())
+
+	// Loud, pre-build collision check across ALL elements — org-only routing
+	// shares the /api space, so a clash across elements is just as fatal.
+	if err := atomic_cmd.CheckElementCollisions(elements); err != nil {
+		return err
+	}
+
+	deployed := map[string]string{}
+	if !atomicForce {
+		if d, err := atomic_cmd.DeployedDigests(); err == nil {
+			deployed = d
+		} else {
+			fmt.Fprintf(out, "  %s couldn't check which functions are unchanged — deploying all\n", common.Hint("·"))
+		}
+	}
+
+	deployedCount, skippedCount := 0, 0
+	for _, el := range elements {
+		// One digest per element — any source change rebuilds all its functions.
+		digest, _ := atomic_cmd.FunctionDigest(el.Dir, el.Name)
+
+		if !atomicForce && elementUnchanged(el, digest, deployed) {
+			for _, f := range el.Funcs {
+				fmt.Fprintf(out, "    %s %s %s\n", common.Check(), f.MethodPath(), common.Hint("(unchanged)"))
+				skippedCount++
+			}
+			continue
+		}
+
+		// Header the element only when the layout is non-trivial (>1 element or
+		// a named one) — a lone Default element shouldn't add visual noise.
+		if len(elements) > 1 || el.Name != atomic_cmd.DefaultElementName {
+			fmt.Fprintf(out, "  %s\n", common.Hint(fmt.Sprintf("element %s (%s)", el.Name, el.Lang)))
+		}
+
+		switch el.Lang {
+		case "go":
+			if err := atomic_cmd.DeployGoElement(el, digest, false); err != nil {
+				return fmt.Errorf("atomic deploy failed in element %q: %w", el.Name, err)
+			}
+			deployedCount += len(el.Funcs)
+		default:
+			// P1 is Go-only for multi-function elements. A single-function
+			// non-Go element is a legacy folder — deploy it the existing way.
+			if len(el.Funcs) > 1 {
+				return fmt.Errorf("element %q is %s with %d functions — multi-function %s "+
+					"elements aren't built yet (P1 is Go-only); keep one function per folder for now",
+					el.Name, el.Lang, len(el.Funcs), el.Lang)
+			}
+			if err := atomic_cmd.DeployFolder(el.Dir, el.Name, true); err != nil {
+				return fmt.Errorf("atomic deploy failed for %q: %w", el.Name, err)
+			}
+			fmt.Fprintf(out, "    %s %s\n", common.Check(), el.Funcs[0].MethodPath())
+			deployedCount++
+		}
+	}
+
 	if skippedCount > 0 {
 		fmt.Fprintf(out, "    %s\n", common.Hint(fmt.Sprintf("%d deployed, %d unchanged", deployedCount, skippedCount)))
 	}

@@ -17,35 +17,42 @@ import (
 	atomic_common "github.com/ondrift/cli/cmd/atomic/common"
 )
 
+// buildGo is the legacy single-function path: stage the folder, then build one
+// binary bound to the conventionally-derived handler name. The Element path
+// (buildGoElementStage + buildGoEntrypoint) is the multi-function generalization.
 func buildGo(absFolder, method, name string) (string, error) {
 	funcName := atomic_common.FuncNameForLanguage(method, name, "native")
+	buildDir, err := buildGoElementStage(absFolder, name)
+	if err != nil {
+		return "", err
+	}
+	// Deliberately no RemoveAll(buildDir) on success: the returned binary
+	// lives inside it and the caller's `defer os.Remove` cleans the binary
+	// after upload; the empty parent leaks until the CLI process exits.
+	bin, err := buildGoEntrypoint(buildDir, funcName, method, "app")
+	if err != nil {
+		os.RemoveAll(buildDir) // #nosec G104
+		return "", err
+	}
+	return bin, nil
+}
 
-	// Each buildGo invocation works in its own host-side scratch
-	// directory so parallel `drift project deploy` runs never race on
-	// go.mod / go.sum mutation of a shared source folder. The user's
-	// source dir is never modified.
+// buildGoElementStage copies a Go Element's package into a fresh host-side
+// tempdir and resolves its dependencies ONCE (go mod init/get/tidy). The
+// caller then compiles one binary per function into it via buildGoEntrypoint
+// and is responsible for RemoveAll(buildDir). Each call gets its own tempdir,
+// so parallel deploys never race; the user's source is never modified.
+func buildGoElementStage(srcDir, name string) (string, error) {
 	buildDir, err := os.MkdirTemp("", "drift-go-build-")
 	if err != nil {
 		return "", fmt.Errorf("create build tempdir: %w", err)
 	}
-	// Note: we deliberately do NOT defer-RemoveAll(buildDir). The
-	// returned binary path lives inside buildDir, and the caller's own
-	// `defer os.Remove(sourcePath)` (in deploy.go) removes the binary
-	// after upload. The empty parent dir leaks until the CLI process
-	// exits — acceptable for a short-lived deploy run.
-
-	if err := copyGoSourceFiles(absFolder, buildDir); err != nil {
-		os.RemoveAll(buildDir) // #nosec G104 -- best-effort tempdir cleanup on error path
+	if err := copyGoSourceFiles(srcDir, buildDir); err != nil {
+		os.RemoveAll(buildDir) // #nosec G104
 		return "", fmt.Errorf("copy build context: %w", err)
 	}
 
-	if err := generateMain(buildDir, funcName, method); err != nil {
-		os.RemoveAll(buildDir) // #nosec G104
-		return "", fmt.Errorf("failed to generate main.go: %w", err)
-	}
-
-	// Ensure a module exists (user functions may ship without a go.mod;
-	// templates always have one).
+	// Ensure a module exists (user functions may ship without a go.mod).
 	if _, statErr := os.Stat(filepath.Join(buildDir, "go.mod")); statErr != nil {
 		initCmd := exec.Command("go", "mod", "init", "atomic/"+safeTmpName(name)) // #nosec G204
 		initCmd.Dir = buildDir
@@ -55,10 +62,9 @@ func buildGo(absFolder, method, name string) (string, error) {
 		}
 	}
 
-	// Pull the published SDK at its latest tag. The root module must be
-	// named explicitly (see atomic_common.DriftGoModule): a bare `go mod
-	// tidy` would otherwise resolve a stale pseudo-version of the repo's
-	// legacy nested `…/sdk/go` module. No version is pinned — @latest tracks
+	// Pull the published SDK at its latest tag. The root module must be named
+	// explicitly (see atomic_common.DriftGoModule) to dodge the legacy nested
+	// `…/sdk/go` pseudo-version module. No version is pinned — @latest tracks
 	// new tags, so a new SDK release never touches the CLI.
 	getCmd := exec.Command("go", "get", atomic_common.DriftGoModule+"@latest") // #nosec G204
 	getCmd.Dir = buildDir
@@ -74,15 +80,24 @@ func buildGo(absFolder, method, name string) (string, error) {
 		return "", fmt.Errorf("go mod tidy error: %w\n%s", err, string(out))
 	}
 
-	buildCmd := exec.Command("go", "build", "-o", "app") // #nosec G204
+	return buildDir, nil
+}
+
+// buildGoEntrypoint generates a main bound to funcName in the already-staged
+// buildDir and compiles one static linux binary named binBase, returning its
+// path. The staged (tidied) package is reused, so per-function cost is just
+// the compile + link — Go's build cache makes every call after the first cheap.
+func buildGoEntrypoint(buildDir, funcName, method, binBase string) (string, error) {
+	if err := generateMain(buildDir, funcName, method); err != nil {
+		return "", fmt.Errorf("failed to generate main.go: %w", err)
+	}
+	buildCmd := exec.Command("go", "build", "-o", binBase) // #nosec G204
 	buildCmd.Dir = buildDir
 	buildCmd.Env = append(os.Environ(), "GOOS=linux", "CGO_ENABLED=0")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
-		os.RemoveAll(buildDir) // #nosec G104
-		return "", fmt.Errorf("go build error: %w\n%s", err, string(out))
+		return "", fmt.Errorf("go build error (%s): %w\n%s", funcName, err, string(out))
 	}
-
-	return filepath.Join(buildDir, "app"), nil
+	return filepath.Join(buildDir, binBase), nil
 }
 
 // copyGoSourceFiles copies the top-level Go source files plus

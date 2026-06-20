@@ -3,18 +3,31 @@ package project
 import (
 	"path/filepath"
 
+	atomic_cmd "github.com/ondrift/cli/cmd/atomic/cmd/deploy"
 	atomic_common "github.com/ondrift/cli/cmd/atomic/common"
 )
 
-// CountAtomicFunctions walks every directory listed under
-// atomic.functions in the Driftfile and returns the total number of
-// `@atomic`-decorated callables across all of them. An Atomic function
-// IS a decorated callable; helpers (callables without an annotation)
-// don't count.
+// CountAtomicFunctions returns the total number of `@atomic`-decorated
+// callables the deploy will ship. It MIRRORS the deploy branch: when the
+// Element layout is in play (a Default element or any multi-function element)
+// it counts across discovered elements; otherwise it counts across the
+// folders listed in the Driftfile (the legacy path, which honors custom
+// `dir:` overrides). Keeping it in lockstep with applyAtomic is what stops a
+// flat app from provisioning zero function slots.
 //
-// Returns an error if any directory has stacked decorators on a
-// single sentinel; those are syntax errors per the parser.
+// An Atomic function IS a decorated callable; un-annotated helpers don't count.
 func CountAtomicFunctions(m *Manifest) (int, error) {
+	elements, err := atomic_cmd.DiscoverElements(m.ResolvePath("atomic"))
+	if err != nil {
+		return 0, err
+	}
+	if shouldUseElementPath(elements) {
+		total := 0
+		for _, el := range elements {
+			total += len(el.Funcs)
+		}
+		return total, nil
+	}
 	total := 0
 	for _, fn := range m.Slice.Atomic.Functions {
 		dir := fn.Dir
@@ -32,11 +45,24 @@ func CountAtomicFunctions(m *Manifest) (int, error) {
 }
 
 // CountScheduledFunctions returns how many `@atomic cron=` (scheduled)
-// callables exist across every directory under atomic.functions. A
-// schedule is declared in the source directive, not the Driftfile, so
-// this — not the vestigial functions[].cron field — is the authoritative
-// scheduled-job count used to size the slice.
+// callables exist — the authoritative scheduled-job count used to size the
+// slice. Like CountAtomicFunctions, it mirrors the deploy branch.
 func CountScheduledFunctions(m *Manifest) (int, error) {
+	elements, err := atomic_cmd.DiscoverElements(m.ResolvePath("atomic"))
+	if err != nil {
+		return 0, err
+	}
+	if shouldUseElementPath(elements) {
+		total := 0
+		for _, el := range elements {
+			for _, f := range el.Funcs {
+				if f.Trigger == "cron" {
+					total++
+				}
+			}
+		}
+		return total, nil
+	}
 	total := 0
 	for _, fn := range m.Slice.Atomic.Functions {
 		dir := fn.Dir
