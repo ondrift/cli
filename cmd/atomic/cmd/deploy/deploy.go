@@ -567,11 +567,9 @@ func DeployFolder(folder, element string, quiet bool) error {
 		case "queue":
 			fmt.Printf("Deploying queue handler '%s' (%s, source: %s)\n", name, langLabel, meta.Method)
 		default:
-			if element != "" {
-				fmt.Printf("Deploying function '%s /%s/%s' (%s, auth: %s)\n", method, element, name, langLabel, auth)
-			} else {
-				fmt.Printf("Deploying function '%s /%s' (%s, auth: %s)\n", method, name, langLabel, auth)
-			}
+			// Org-only routing: a function is served at /<name>; the element is
+			// never a route segment.
+			fmt.Printf("Deploying function '%s /%s' (%s, auth: %s)\n", method, name, langLabel, auth)
 		}
 	}
 

@@ -59,7 +59,9 @@ func elementList() *cobra.Command {
 				fmt.Println(")")
 
 				for _, r := range fns {
-					route := fmt.Sprintf("/api/%s/%s", name, r.FunctionName)
+					// Org-only routing: the element groups these functions (it's the
+					// section header above) but never appears in the route path.
+					route := "/api/" + r.FunctionName
 					methods := r.Method
 					if methods == "" {
 						methods = "?"

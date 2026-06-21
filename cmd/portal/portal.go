@@ -1015,10 +1015,8 @@ func (m *model) renderAtomic(b *strings.Builder) {
 
 	var rail []string
 	for i, f := range m.fns {
+		// Org-only routing: the element is never a route segment.
 		route := "/" + f.FunctionName
-		if f.Element != "" {
-			route = "/" + f.Element + "/" + f.FunctionName
-		}
 		routeW := railW - 1 - colMethod - 1 // " METHOD route"
 		if routeW < 6 {
 			routeW = 6
@@ -1070,10 +1068,8 @@ func (m *model) renderAtomic(b *strings.Builder) {
 // lines that fit are shown (tail-style), so new logs keep streaming at the bottom.
 func (m *model) renderFullLogs(b *strings.Builder) {
 	f := m.fns[m.fnExp]
+	// Org-only routing: the element is never a route segment.
 	route := "/" + f.FunctionName
-	if f.Element != "" {
-		route = "/" + f.Element + "/" + f.FunctionName
-	}
 	fmt.Fprintf(b, "  %s %s  %s   %s\r\n\r\n",
 		dim("logs"), cGreen+"●"+cReset, bold(route), dim("[f] exit full-screen"))
 

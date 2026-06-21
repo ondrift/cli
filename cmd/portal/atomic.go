@@ -67,10 +67,9 @@ func (m *model) fnConfigRows(f fnRow) [][2]string {
 	if element == "" {
 		element = "—"
 	}
+	// Org-only routing: the route is the bare function name; the slice's trigger
+	// FuncPath is likewise bare, so this binding key must not carry the element.
 	route := f.FunctionName
-	if f.Element != "" {
-		route = f.Element + "/" + f.FunctionName
-	}
 	trigger, schedule := "—", "—"
 	for _, t := range m.triggers {
 		if !triggerBoundTo(t, route, f.FunctionName) {
@@ -95,8 +94,9 @@ func (m *model) fnConfigRows(f fnRow) [][2]string {
 }
 
 // triggerBoundTo reports whether trigger t targets the function at `route`
-// (element/name) or named `name`. FuncPath is the precise binding — the route's
-// :params are treated as wildcards, so "board/123/sync" binds "board/:id/sync".
+// (org-only: the bare route path, no element) or named `name`. FuncPath is the
+// precise binding — the route's :params are treated as wildcards, so
+// "board/123/sync" binds "board/:id/sync".
 // FunctionName is only a fallback (it can collide across elements), used when the
 // slice couldn't resolve a func_path.
 func triggerBoundTo(t triggerDef, route, name string) bool {
@@ -192,10 +192,8 @@ func (m *model) fnExpandLines(width int) []string {
 	f := m.fns[m.fnExp]
 	met := m.fnMet[fnKey(f)] // per-function metrics (kept live by the Run ticker)
 
+	// Org-only routing: the path is the bare function name (no element segment).
 	path := "/" + f.FunctionName
-	if f.Element != "" {
-		path = "/" + f.Element + "/" + f.FunctionName
-	}
 	errPct := 0.0
 	if met.TotalRequests > 0 {
 		errPct = float64(met.ErrorRequests) / float64(met.TotalRequests) * 100

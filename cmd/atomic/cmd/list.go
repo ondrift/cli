@@ -69,11 +69,9 @@ func printFlatTable(records []atomicRecord) {
 	fmt.Printf("%-12s  %-8s  %-8s  %-24s  %s\n", "ID", "LANG", "METHOD", "ROUTE", "Deployed At")
 	fmt.Printf("%-12s  %-8s  %-8s  %-24s  %s\n", "------------", "--------", "--------", "------------------------", "-------------------")
 	for _, r := range records {
-		route := r.FunctionName
-		if r.Element != "" {
-			route = r.Element + "/" + r.FunctionName
-		}
-		fmt.Printf("%-12s  %-8s  %-8s  %-24s  %s\n", r.Id, langOrDefault(r), r.Method, route, r.CreatedAt)
+		// Org-only routing: the route is the bare function name; the element is
+		// a grouping concept (shown in the grouped view), never a path segment.
+		fmt.Printf("%-12s  %-8s  %-8s  %-24s  %s\n", r.Id, langOrDefault(r), r.Method, r.FunctionName, r.CreatedAt)
 	}
 }
 
