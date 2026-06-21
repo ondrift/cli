@@ -10,7 +10,7 @@ import (
 func main() {
 	var req drift.Request
 	_ = json.NewDecoder(os.Stdin).Decode(&req)
-	var body RequestBody
+	var body {{BODYTYPE}}
 	_ = json.Unmarshal(req.Body, &body)
 	status, message, payload, headers := {{FUNC}}(body, req)
 	data, _ := json.Marshal(payload)

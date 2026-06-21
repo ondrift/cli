@@ -20,8 +20,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	atomic_common "github.com/ondrift/cli/cmd/atomic/common"
 	"github.com/ondrift/cli/common"
@@ -36,6 +38,7 @@ type ElementFunc struct {
 	Method       string // http verb | queue name | cron expr
 	Path         string // http route path (http triggers only)
 	SentinelName string // the source-level function name the build binds to
+	SourceFile   string // basename of the file declaring it (interpreted wrappers import from it)
 	Auth         string
 	Stream       string // "" | "sse" | "ws"
 	Secrets      []string
@@ -91,38 +94,57 @@ func DiscoverElements(atomicRoot string) ([]Element, error) {
 // top-level source files. Returns (nil, nil) when the dir has no @atomic
 // functions. Enforces one language per element.
 func elementFromDir(dir, name string) (*Element, error) {
-	metas, err := atomic_common.ParseAllAtomicMetadataFromDir(dir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("element %q: %w", name, err)
+		return nil, fmt.Errorf("element %q: read dir: %w", name, err)
 	}
-	if len(metas) == 0 {
-		return nil, nil
-	}
-
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
 
-	el := &Element{Name: name, Dir: abs}
-	for _, m := range metas {
-		if el.Lang == "" {
-			el.Lang = m.Language
-		} else if m.Language != el.Lang {
-			return nil, fmt.Errorf(
-				"element %q mixes languages (%s and %s) — an Element is one language; "+
-					"move the %s functions into their own Element (a separate folder under atomic/)",
-				name, el.Lang, m.Language, m.Language)
+	// Iterate files (not ParseAllAtomicMetadataFromDir) so we can record which
+	// FILE each function lives in — interpreted wrappers import the handler from
+	// its module.
+	var el *Element
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
 		}
-		el.Funcs = append(el.Funcs, ElementFunc{
-			Trigger:      m.Trigger,
-			Method:       m.Method,
-			Path:         m.Path,
-			SentinelName: m.SentinelName,
-			Auth:         m.Auth,
-			Stream:       m.Stream,
-			Secrets:      m.Secrets,
-		})
+		fname := e.Name()
+		if atomic_common.LanguageFromExt(filepath.Ext(fname)) == "" {
+			continue
+		}
+		metas, perr := atomic_common.ParseAllAtomicMetadata(filepath.Join(dir, fname))
+		if perr != nil {
+			return nil, fmt.Errorf("element %q: %w", name, perr)
+		}
+		for _, m := range metas {
+			if el == nil {
+				el = &Element{Name: name, Dir: abs}
+			}
+			if el.Lang == "" {
+				el.Lang = m.Language
+			} else if m.Language != el.Lang {
+				return nil, fmt.Errorf(
+					"element %q mixes languages (%s and %s) — an Element is one language; "+
+						"move the %s functions into their own Element (a separate folder under atomic/)",
+					name, el.Lang, m.Language, m.Language)
+			}
+			el.Funcs = append(el.Funcs, ElementFunc{
+				Trigger:      m.Trigger,
+				Method:       m.Method,
+				Path:         m.Path,
+				SentinelName: m.SentinelName,
+				SourceFile:   fname,
+				Auth:         m.Auth,
+				Stream:       m.Stream,
+				Secrets:      m.Secrets,
+			})
+		}
+	}
+	if el == nil {
+		return nil, nil
 	}
 	sort.Slice(el.Funcs, func(i, j int) bool {
 		return el.Funcs[i].SentinelName < el.Funcs[j].SentinelName
@@ -135,10 +157,14 @@ func elementFromDir(dir, name string) (*Element, error) {
 // routing means two functions sharing a key collide regardless of element,
 // so this is also the cross-element collision key.
 func (f ElementFunc) DeployKey() string {
-	if f.Trigger == "http" {
+	switch f.Trigger {
+	case "http":
 		return f.Path
+	case "queue":
+		return f.Method // a queue handler's identity is its (lowercase) queue name
+	default:
+		return f.SentinelName
 	}
-	return f.SentinelName
 }
 
 // MethodPath renders a function as "<method>:<path>" for diagnostics.
@@ -155,11 +181,22 @@ func (f ElementFunc) MethodPath() string {
 // to the operator. digest is the element's content fingerprint, recorded
 // against every function so an unchanged element is skippable next deploy.
 func DeployGoElement(el Element, digest string, quiet bool) error {
-	buildDir, err := buildGoElementStage(el.Dir, el.Name)
+	if len(el.Funcs) == 0 {
+		return nil
+	}
+	// Fail fast on triggers the deploy path doesn't wire yet.
+	for _, f := range el.Funcs {
+		if f.Trigger != "http" && f.Trigger != "queue" {
+			return fmt.Errorf("@atomic %s= triggers aren't wired in the deploy path yet "+
+				"(function %s in element %q)", f.Trigger, f.SentinelName, el.Name)
+		}
+	}
+
+	stageDir, err := buildGoElementStage(el.Dir, el.Name)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(buildDir) // #nosec G104
+	defer os.RemoveAll(stageDir) // #nosec G104
 
 	// One user-source archive for the element's package, shared by its
 	// functions (they all compile from the same source).
@@ -170,40 +207,75 @@ func DeployGoElement(el Element, digest string, quiet bool) error {
 		userSrc = ""
 	}
 
-	for _, f := range el.Funcs {
-		if f.Trigger != "http" && f.Trigger != "queue" {
-			return fmt.Errorf("@atomic %s= triggers aren't wired in the deploy path yet "+
-				"(function %s in element %q)", f.Trigger, f.SentinelName, el.Name)
-		}
+	// Warm Go's build cache by compiling the shared package once (a throwaway
+	// entrypoint). The parallel builds below then only re-link, and a
+	// package-wide compile error surfaces here once rather than N times across
+	// the workers.
+	warmMethod := el.Funcs[0].Method
+	if el.Funcs[0].Trigger == "queue" {
+		warmMethod = "queue"
+	}
+	if _, warmDir, werr := buildGoEntrypointIsolated(stageDir, el.Funcs[0].SentinelName, warmMethod, "warm"); werr != nil {
+		return fmt.Errorf("element %q failed to compile: %w", el.Name, werr)
+	} else {
+		os.RemoveAll(warmDir) // #nosec G104
+	}
+
+	// Build + ship every function CONCURRENTLY — each in its own dir, sharing
+	// the warmed module + build caches, so this is N parallel links + uploads.
+	deployOne := func(f ElementFunc) error {
 		method, name := f.Method, f.Path
 		if f.Trigger == "queue" {
-			method, name = "queue", f.SentinelName
+			// function_name = the queue name (lowercase, valid); the operator
+			// rejects the PascalCase sentinel. The trigger Source binds the
+			// same queue to this handler.
+			method, name = "queue", f.Method
 		}
-
-		bin, err := buildGoEntrypoint(buildDir, f.SentinelName, method,
+		bin, fnDir, berr := buildGoEntrypointIsolated(stageDir, f.SentinelName, method,
 			safeTmpName(el.Name+"-"+f.SentinelName))
-		if err != nil {
-			return err
+		if berr != nil {
+			return berr
 		}
-
+		defer os.RemoveAll(fnDir) // #nosec G104
 		var triggers []TriggerSpec
 		if f.Trigger == "queue" {
-			triggers = []TriggerSpec{{
-				Type: "queue", Source: f.Method, Method: "queue", PollMS: 500, MaxRetry: 3,
-			}}
+			triggers = []TriggerSpec{{Type: "queue", Source: f.Method, Method: "queue", PollMS: 500, MaxRetry: 3}}
 		}
-
-		err = sendSourceToOperator(name, method, "native", f.Auth, el.Name,
+		return sendSourceToOperator(name, method, "native", f.Auth, el.Name,
 			f.Stream, f.Secrets, bin, userSrc, triggers, digest)
-		os.Remove(bin) // #nosec G104 -- free each binary after upload
-		if err != nil {
-			return fmt.Errorf("%s: %w", f.MethodPath(), err)
-		}
-		if !quiet {
+	}
+
+	results := make([]error, len(el.Funcs))
+	workers := min(runtime.NumCPU(), 8, len(el.Funcs))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, workers)
+	for i := range el.Funcs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = deployOne(el.Funcs[i])
+		}(i)
+	}
+	wg.Wait()
+
+	// Ordered report; return the first failure with its real error.
+	var firstErr error
+	for i, f := range el.Funcs {
+		switch {
+		case results[i] != nil:
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", f.MethodPath(), results[i])
+			}
+			if !quiet {
+				fmt.Printf("    %s %s\n", common.Cross(), f.MethodPath())
+			}
+		case !quiet:
 			fmt.Printf("    %s %s\n", common.Check(), f.MethodPath())
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // CheckElementCollisions rejects a project where two @atomic functions share a

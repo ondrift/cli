@@ -1,7 +1,7 @@
-{{ANNOTATION}}
 import drift  # secrets, nosql, blobs, queues, cache, locks, jwt, http_request, log
 
 
+{{ANNOTATION}}
 def {{FUNC}}(body, req):
     name = body.get("name", "")
     if not name:

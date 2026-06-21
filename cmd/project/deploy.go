@@ -309,6 +309,17 @@ type atomicJob struct {
 // runtime the surviving handler answers BOTH verbs. We surface that here, up
 // front and offline, instead of letting it become a quiet mis-route in prod.
 func checkRouteCollisions(m *Manifest) error {
+	// Element layout: dedupe `(method,path)` across ALL discovered elements
+	// (org-only routing shares the /api space). A pure legacy folder tree
+	// falls through to the per-listed-folder check below.
+	elements, err := atomic_cmd.DiscoverElements(m.ResolvePath("atomic"))
+	if err != nil {
+		return err // surface mixed-language elements etc. early, pre-network
+	}
+	if shouldUseElementPath(elements) {
+		return atomic_cmd.CheckElementCollisions(elements)
+	}
+
 	type routeRef struct{ fn, methodPath string }
 	byKey := map[string][]routeRef{}
 	for _, fn := range m.Slice.Atomic.Functions {
@@ -484,11 +495,8 @@ func elementUnchanged(el atomic_cmd.Element, digest string, deployed map[string]
 func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 	fmt.Fprintf(out, "  %s\n", common.AtomicHeader())
 
-	// Loud, pre-build collision check across ALL elements — org-only routing
-	// shares the /api space, so a clash across elements is just as fatal.
-	if err := atomic_cmd.CheckElementCollisions(elements); err != nil {
-		return err
-	}
+	// (Route collisions are caught pre-network in checkRouteCollisions, run by
+	// the deploy command before any reconcile.)
 
 	deployed := map[string]string{}
 	if !atomicForce {
@@ -501,8 +509,9 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 
 	deployedCount, skippedCount := 0, 0
 	for _, el := range elements {
-		// One digest per element — any source change rebuilds all its functions.
-		digest, _ := atomic_cmd.FunctionDigest(el.Dir, el.Name)
+		// One flat digest per element — any top-level source change rebuilds all
+		// its functions; named-element subdirs never bleed into a Default digest.
+		digest, _ := atomic_cmd.ElementDigest(el.Dir, el.Name)
 
 		if !atomicForce && elementUnchanged(el, digest, deployed) {
 			for _, f := range el.Funcs {
@@ -518,25 +527,29 @@ func applyAtomicElements(elements []atomic_cmd.Element, out io.Writer) error {
 			fmt.Fprintf(out, "  %s\n", common.Hint(fmt.Sprintf("element %s (%s)", el.Name, el.Lang)))
 		}
 
-		switch el.Lang {
-		case "go":
+		switch {
+		case el.Lang == "go":
 			if err := atomic_cmd.DeployGoElement(el, digest, false); err != nil {
 				return fmt.Errorf("atomic deploy failed in element %q: %w", el.Name, err)
 			}
 			deployedCount += len(el.Funcs)
-		default:
-			// P1 is Go-only for multi-function elements. A single-function
-			// non-Go element is a legacy folder — deploy it the existing way.
-			if len(el.Funcs) > 1 {
-				return fmt.Errorf("element %q is %s with %d functions — multi-function %s "+
-					"elements aren't built yet (P1 is Go-only); keep one function per folder for now",
-					el.Name, el.Lang, len(el.Funcs), el.Lang)
+		case el.Lang == "python" || el.Lang == "node" || el.Lang == "ruby" || el.Lang == "php":
+			if err := atomic_cmd.DeployInterpretedElement(el, digest, false); err != nil {
+				return fmt.Errorf("atomic deploy failed in element %q: %w", el.Name, err)
 			}
+			deployedCount += len(el.Funcs)
+		case len(el.Funcs) == 1:
+			// A single-function non-Go element is a legacy folder — deploy it
+			// the existing per-folder way (works for every language).
 			if err := atomic_cmd.DeployFolder(el.Dir, el.Name, true); err != nil {
 				return fmt.Errorf("atomic deploy failed for %q: %w", el.Name, err)
 			}
 			fmt.Fprintf(out, "    %s %s\n", common.Check(), el.Funcs[0].MethodPath())
 			deployedCount++
+		default:
+			return fmt.Errorf("element %q is %s with %d functions — multi-function %s "+
+				"elements aren't built yet; keep one function per folder for %s until it lands",
+				el.Name, el.Lang, len(el.Funcs), el.Lang, el.Lang)
 		}
 	}
 

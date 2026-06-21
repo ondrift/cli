@@ -60,7 +60,7 @@ drift project deploy                   # …or deploy a whole app from a Driftfi
 
 | Command | Description |
 |---------|-------------|
-| `drift atomic new [name]` | Scaffold a function in any of the six languages, HTTP or queue trigger. Flags: `-l/--lang`, `-m/--method`, `-q/--queue`, `-a/--auth`. |
+| `drift atomic new [name]` | Add a function to an element &mdash; a flat file under `atomic/`, not a per-function folder. HTTP or queue trigger. Flags: `-l/--lang`, `-m/--method`, `-q/--queue`, `-a/--auth`, `-e/--element`. |
 | `drift atomic fetch [path]` | Resolve dependencies for every function found under a path. |
 | `drift atomic run <dir>` | Run a function locally with hot reload. |
 | `drift atomic deploy <dir>` | Build, archive, and deploy a function. |

@@ -100,6 +100,30 @@ func buildGoEntrypoint(buildDir, funcName, method, binBase string) (string, erro
 	return filepath.Join(buildDir, binBase), nil
 }
 
+// buildGoEntrypointIsolated compiles one function's entrypoint in its OWN fresh
+// build dir (a copy of the staged package + a main bound to funcName), so it is
+// safe to call CONCURRENTLY for an element's functions. They share the module
+// cache (deps already resolved by buildGoElementStage) and Go's content-
+// addressed build cache (the package compiles once; the rest only re-link), so
+// parallelism turns the per-function link into the only marginal cost. Returns
+// the binary path and the fn dir; the caller must RemoveAll(fnDir).
+func buildGoEntrypointIsolated(stageDir, funcName, method, binBase string) (bin, fnDir string, err error) {
+	fnDir, err = os.MkdirTemp("", "drift-go-fn-")
+	if err != nil {
+		return "", "", fmt.Errorf("create fn build dir: %w", err)
+	}
+	if err = copyGoSourceFiles(stageDir, fnDir); err != nil {
+		os.RemoveAll(fnDir) // #nosec G104
+		return "", "", fmt.Errorf("copy staged package: %w", err)
+	}
+	bin, err = buildGoEntrypoint(fnDir, funcName, method, binBase)
+	if err != nil {
+		os.RemoveAll(fnDir) // #nosec G104
+		return "", "", err
+	}
+	return bin, fnDir, nil
+}
+
 // copyGoSourceFiles copies the top-level Go source files plus
 // go.mod / go.sum from src to dst. Subdirectories are not copied —
 // the build context for a single Atomic function is always flat

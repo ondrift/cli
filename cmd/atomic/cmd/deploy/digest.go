@@ -122,6 +122,61 @@ func FunctionDigest(dir, element string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// ElementDigest fingerprints an element's package using only the TOP-LEVEL
+// non-hidden files in dir — never subdirectories. For a Default element at
+// atomic/, the subdirectories are OTHER elements, not part of this package, so
+// folding them in would spuriously rebuild the Default when a sibling element
+// changes. This matches the build's flat copy (copyGoSourceFiles). The digest
+// is element-granular: any source change reflips it, so the whole element
+// redeploys (its functions all share the same compiled package). `name` is
+// mixed in exactly like FunctionDigest's element label.
+func ElementDigest(dir, name string) (string, error) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve element dir: %w", err)
+	}
+	entries, err := os.ReadDir(absDir)
+	if err != nil {
+		return "", fmt.Errorf("read element dir: %w", err)
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if n := e.Name(); !strings.HasPrefix(n, ".") {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00element=%s\x00", digestVersion, name)
+	for _, n := range names {
+		full := filepath.Join(absDir, n)
+		info, serr := os.Stat(full)
+		if serr != nil {
+			return "", serr
+		}
+		mode := "0"
+		if info.Mode()&0o111 != 0 {
+			mode = "1"
+		}
+		fmt.Fprintf(h, "%s\x00%s\x00", n, mode)
+		f, oerr := os.Open(full) // #nosec G304 — hashing the user's own source by design
+		if oerr != nil {
+			return "", oerr
+		}
+		if _, cerr := io.Copy(h, f); cerr != nil {
+			f.Close() // #nosec G104
+			return "", cerr
+		}
+		f.Close() // #nosec G104
+		fmt.Fprint(h, "\x00")
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 // deployedAtomic is the subset of an /ops/atomic/list record needed to match a
 // local function against its last-deployed digest.
 type deployedAtomic struct {

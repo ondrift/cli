@@ -237,6 +237,11 @@ func languageFromExt(ext string) string {
 	return ""
 }
 
+// LanguageFromExt reports the Drift language key for a file extension (e.g.
+// ".py" → "python"), or "" if the extension isn't a supported source file.
+// Exported so element discovery can pick out source files per language.
+func LanguageFromExt(ext string) string { return languageFromExt(ext) }
+
 // ParseAllAtomicMetadata reads filename and returns one AtomicMeta
 // per decorated callable in the file. Returns an empty slice if the
 // file has no decorated callables. Returns an error if any callable

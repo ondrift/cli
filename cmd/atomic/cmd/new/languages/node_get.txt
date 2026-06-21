@@ -1,6 +1,6 @@
-{{ANNOTATION}}
 const drift = require('@ondrift/sdk'); // secrets, nosql, blobs, queues, cache, locks, jwt, httpRequest, log
 
+{{ANNOTATION}}
 function {{FUNC}}(req) {
     return [200, 'OK', { hello: 'from drift' }];
 }

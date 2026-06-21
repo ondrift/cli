@@ -1,20 +1,21 @@
-{{ANNOTATION}}
 package main
 
 import (
 	drift "github.com/ondrift/sdk/go"
 )
 
-// RequestBody is the JSON shape of the request body. The generated wrapper
-// unmarshals the incoming body into it before calling {{FUNC}}.
-type RequestBody struct {
+// {{FUNC}}Body is the JSON shape of this handler's request body. The generated
+// wrapper unmarshals the incoming body into it before calling {{FUNC}}. Each
+// function in an element names its own body type, so they never collide.
+type {{FUNC}}Body struct {
 	Name string `json:"name"`
 }
 
 // {{FUNC}} handles the request and returns (status, message, payload, headers).
 // The Drift SDK is imported as `drift` (secrets, nosql, blobs, queues, cache,
 // locks, jwt, http_request, log).
-func {{FUNC}}(body RequestBody, req drift.Request) (int, string, interface{}, map[string]string) {
+{{ANNOTATION}}
+func {{FUNC}}(body {{FUNC}}Body, req drift.Request) (int, string, interface{}, map[string]string) {
 	if body.Name == "" {
 		return 400, "Bad Request", map[string]any{"error": "name is required"}, nil
 	}

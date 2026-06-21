@@ -35,6 +35,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -94,16 +95,51 @@ func safeTmpName(name string) string {
 }
 
 // generateMain writes a main.go that wraps the user's Go handler function.
+// For body-shaped triggers it binds `var body <T>` to the handler's actual
+// first-parameter type (goBodyType) rather than a hardcoded name, so several
+// POST handlers can coexist in one element — each with its own body struct —
+// without colliding on a shared `RequestBody`.
 func generateMain(dir, funcName, method string) error {
 	var code string
-	replacer := strings.NewReplacer("{{FUNC}}", funcName)
 	switch method {
 	case "post", "put", "delete", "patch", "queue":
-		code = replacer.Replace(defaultNativeServerPost)
+		code = strings.NewReplacer("{{FUNC}}", funcName, "{{BODYTYPE}}", goBodyType(dir, funcName)).
+			Replace(defaultNativeServerPost)
 	default:
-		code = replacer.Replace(defaultNativeServerGet)
+		code = strings.NewReplacer("{{FUNC}}", funcName).Replace(defaultNativeServerGet)
 	}
 	return os.WriteFile(filepath.Join(dir, "main.go"), []byte(code), 0o600)
+}
+
+// goBodyType returns the type of funcName's first parameter, read from the
+// staged Go sources in dir — e.g. `LoginBody` from
+// `func PostLogin(body LoginBody, req drift.Request)`. This lets each POST
+// handler in an element declare its own body struct; the generated wrapper
+// unmarshals into exactly that type. Falls back to "RequestBody" (the
+// historical name) when the signature can't be read, so single-function and
+// legacy deploys are byte-for-byte unchanged.
+func goBodyType(dir, funcName string) string {
+	const fallback = "RequestBody"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fallback
+	}
+	re := regexp.MustCompile(`func\s+` + regexp.QuoteMeta(funcName) + `\s*\(\s*[A-Za-z_]\w*\s+([^,)]+)`)
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "main.go" || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		data, rerr := os.ReadFile(filepath.Join(dir, e.Name())) // #nosec G304 -- staged build dir, filesystem-sourced name
+		if rerr != nil {
+			continue
+		}
+		if m := re.FindSubmatch(data); m != nil {
+			if t := strings.TrimSpace(string(m[1])); t != "" {
+				return t
+			}
+		}
+	}
+	return fallback
 }
 
 // generatePythonWrapper writes app.py that wraps the user's Python function.
@@ -440,7 +476,7 @@ func sendSourceToOperator(name, method, language, auth, element, stream string, 
 	// from inside that critical section — never retried; it surfaces as-is.
 	bodyBytes := buf.Bytes()
 	contentType := mw.FormDataContentType()
-	deadline := time.Now().Add(60 * time.Second)
+	deadline := time.Now().Add(90 * time.Second)
 	for {
 		resp, err := common.DoRequestWithContentType(
 			http.MethodPost,
@@ -449,6 +485,14 @@ func sendSourceToOperator(name, method, language, auth, element, stream string, 
 			bytes.NewReader(bodyBytes),
 		)
 		if err != nil {
+			// Transport error (a timeout or a momentary blip — common when an
+			// element ships many functions at once and the API is briefly
+			// saturated). The deploy is idempotent, so retry within the deadline
+			// rather than failing the whole element on one slow upload.
+			if time.Now().Before(deadline) {
+				time.Sleep(2 * time.Second)
+				continue
+			}
 			return common.TransportError("deploy the function", err)
 		}
 		if resp.StatusCode == http.StatusConflict && time.Now().Before(deadline) {

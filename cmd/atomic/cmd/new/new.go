@@ -73,31 +73,33 @@ var langExt = map[string]string{
 
 // New is the `drift atomic new` command.
 func New() *cobra.Command {
-	var lang, method, queue, auth string
+	var lang, method, queue, auth, element string
 	c := &cobra.Command{
 		Use:     "new [name]",
-		Short:   "Scaffold a new Atomic function",
+		Short:   "Add an Atomic function to an element",
 		GroupID: "development",
 		Args:    cobra.MaximumNArgs(1),
 		Example: "  drift atomic new\n" +
 			"  drift atomic new send-email -l python -m post\n" +
-			"  drift atomic new process-jobs -l go -q jobs",
+			"  drift atomic new process-jobs -l go -q jobs\n" +
+			"  drift atomic new train -l python -m post --element ml",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := ""
 			if len(args) == 1 {
 				name = args[0]
 			}
-			return runNew(name, lang, method, queue, auth)
+			return runNew(name, lang, method, queue, auth, element)
 		},
 	}
 	c.Flags().StringVarP(&lang, "lang", "l", "", "language: go|python|node|ruby|php|rust")
 	c.Flags().StringVarP(&method, "method", "m", "", "HTTP method: get|post|put|delete|patch")
 	c.Flags().StringVarP(&queue, "queue", "q", "", "queue name (creates a queue-triggered function)")
 	c.Flags().StringVarP(&auth, "auth", "a", "", "auth for HTTP: none|apikey|jwt (default none)")
+	c.Flags().StringVarP(&element, "element", "e", "", "element to add it to (default: the flat top-level element)")
 	return c
 }
 
-func runNew(name, lang, method, queue, auth string) error {
+func runNew(name, lang, method, queue, auth, element string) error {
 	// ---- name ----
 	if name == "" {
 		if err := survey.AskOne(&survey.Input{Message: "Function name (e.g. send-email):"}, &name,
@@ -204,39 +206,100 @@ func runNew(name, lang, method, queue, auth string) error {
 	source := strings.NewReplacer("{{ANNOTATION}}", annotation, "{{FUNC}}", funcName).
 		Replace(sourceTemplate(lang, shape))
 
-	if _, err := os.Stat(name); err == nil {
-		return fmt.Errorf("directory %q already exists", name)
-	}
-	if err := os.MkdirAll(name, 0o750); err != nil {
-		return fmt.Errorf("create function directory: %w", err)
+	// ---- resolve the target element + drop a flat handler file into it ----
+	// An element is a single-language backend: a folder of flat source files
+	// sharing one manifest. The default element is atomic/ itself; --element
+	// targets a named subfolder. Adding a function never creates a per-function
+	// folder — it's just another file alongside its siblings.
+	atomicDir := resolveAtomicDir()
+	elementDir, elementID := atomicDir, defaultElement
+	if element != "" {
+		if !nameRe.MatchString(element) {
+			return fmt.Errorf("invalid element name %q — use lowercase letters, digits and hyphens", element)
+		}
+		elementDir, elementID = filepath.Join(atomicDir, element), element
 	}
 
-	srcFile := filepath.Join(name, sourceBase(lang, name)+"."+langExt[lang])
+	// One language per element — a different language is, by definition, a
+	// different element.
+	if existing := elementLang(elementDir); existing != "" && existing != lang {
+		return fmt.Errorf("the %s element is %s — a different language is a different element; "+
+			"pass --element <name> to start a new one", elementID, existing)
+	}
+	if err := os.MkdirAll(elementDir, 0o750); err != nil {
+		return fmt.Errorf("create element dir: %w", err)
+	}
+
+	srcFile := filepath.Join(elementDir, sourceBase(lang, name)+"."+langExt[lang])
+	if exists(srcFile) {
+		return fmt.Errorf("%s already exists", srcFile)
+	}
 	if err := os.WriteFile(srcFile, []byte(source), 0o600); err != nil {
 		return fmt.Errorf("write source: %w", err)
 	}
-	manifestName, manifestBody := manifest(lang, name)
-	if err := os.WriteFile(filepath.Join(name, manifestName), []byte(manifestBody), 0o600); err != nil {
-		return fmt.Errorf("write manifest: %w", err)
+
+	// Manifest / .env / .gitignore: one per element, written only when absent so
+	// adding a function never clobbers an existing element's shared files.
+	created := []string{srcFile}
+	manifestName, manifestBody := manifest(lang, elementID)
+	if mp := filepath.Join(elementDir, manifestName); !exists(mp) {
+		if err := os.WriteFile(mp, []byte(manifestBody), 0o600); err != nil {
+			return fmt.Errorf("write manifest: %w", err)
+		}
+		created = append(created, mp)
 	}
-	if err := os.WriteFile(filepath.Join(name, ".env"), []byte(dotEnv), 0o600); err != nil {
-		return fmt.Errorf("write .env: %w", err)
+	if ep := filepath.Join(elementDir, ".env"); !exists(ep) {
+		_ = os.WriteFile(ep, []byte(dotEnv), 0o600) // #nosec G306 -- local-dev secrets file
 	}
-	if err := os.WriteFile(filepath.Join(name, ".gitignore"), []byte(gitignore), 0o600); err != nil {
-		return fmt.Errorf("write .gitignore: %w", err)
+	if gp := filepath.Join(atomicDir, ".gitignore"); !exists(gp) {
+		_ = os.WriteFile(gp, []byte(gitignore), 0o600) // #nosec G306
 	}
 
 	trigger := "HTTP " + strings.ToUpper(method)
 	if isQueue {
 		trigger = "queue=" + queue
 	}
-	fmt.Printf("✅ Created %s/  (%s, %s)\n", name, lang, trigger)
-	fmt.Printf("   %s\n   %s\n\n", srcFile, filepath.Join(name, manifestName))
-	fmt.Printf("Next:\n")
-	fmt.Printf("\tdrift atomic fetch %s    # resolve dependencies\n", name)
-	fmt.Printf("\tdrift atomic run %s      # run locally\n", name)
-	fmt.Printf("\tdrift atomic deploy %s   # deploy\n", name)
+	fmt.Printf("✅ Added %s to the %s element  (%s, %s)\n", filepath.Base(srcFile), elementID, lang, trigger)
+	for _, f := range created {
+		fmt.Printf("   %s\n", f)
+	}
+	fmt.Printf("\nNext:\n")
+	fmt.Printf("\tdrift project deploy   # discovers every @atomic function and ships the element\n")
 	return nil
+}
+
+// defaultElement is the implicit flat element (atomic/*.<lang>) — mirrors the
+// deploy package's DefaultElementName without importing it.
+const defaultElement = "default"
+
+func exists(p string) bool { _, err := os.Stat(p); return err == nil }
+
+// resolveAtomicDir picks where to drop the new function, relative to the working
+// directory: "." when we're already inside an atomic/ folder, else "atomic"
+// (created on first use — a fresh project just gets its first function).
+func resolveAtomicDir() string {
+	if cwd, err := os.Getwd(); err == nil && filepath.Base(cwd) == "atomic" {
+		return "."
+	}
+	return "atomic"
+}
+
+// elementLang reports the single language of the source already in dir (an
+// element is one language), or "" if it holds none yet.
+func elementLang(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if l := atomic_common.LanguageFromExt(filepath.Ext(e.Name())); l != "" {
+			return l
+		}
+	}
+	return ""
 }
 
 // commentPrefix returns the line-comment marker for the language.

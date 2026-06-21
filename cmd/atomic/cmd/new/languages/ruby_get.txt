@@ -1,6 +1,6 @@
-{{ANNOTATION}}
 require 'drift' # Drift.secret, Drift.nosql, Drift.blob, Drift.queue, Drift.cache, Drift.lock, Drift.jwt, Drift.log
 
+{{ANNOTATION}}
 def {{FUNC}}(req)
   [200, "OK", { "hello" => "from drift" }]
 end

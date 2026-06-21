@@ -1,7 +1,7 @@
-{{ANNOTATION}}
 use drift_sdk::Value; // drift_sdk::{secret, cache, nosql, queue, blob, lock, jwt, log, http_request}
 use serde_json::json;
 
+{{ANNOTATION}}
 pub fn {{FUNC}}(body: Value, req: Value) -> (i64, &'static str, Value) {
     let _ = req;
     let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("");
