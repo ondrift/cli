@@ -153,13 +153,14 @@ func elementFromDir(dir, name string) (*Element, error) {
 }
 
 // DeployKey is the platform's function identity for an @atomic function:
-// the route path for http triggers, else the sentinel name. Org-only
+// method+path for http triggers (a function is identified by both, so
+// get:users and post:users are distinct), else the sentinel name. Org-only
 // routing means two functions sharing a key collide regardless of element,
 // so this is also the cross-element collision key.
 func (f ElementFunc) DeployKey() string {
 	switch f.Trigger {
 	case "http":
-		return f.Path
+		return f.Method + ":" + f.Path // method is part of the identity
 	case "queue":
 		return f.Method // a queue handler's identity is its (lowercase) queue name
 	default:
@@ -302,13 +303,13 @@ func CheckElementCollisions(elements []Element) error {
 			parts[i] = fmt.Sprintf("%s [element %s]", r.mp, r.element)
 		}
 		sort.Strings(parts)
-		collisions = append(collisions, fmt.Sprintf("path %q: %s", k, strings.Join(parts, ", ")))
+		collisions = append(collisions, fmt.Sprintf("%q: %s", k, strings.Join(parts, ", ")))
 	}
 	if len(collisions) == 0 {
 		return nil
 	}
 	sort.Strings(collisions)
-	return fmt.Errorf("route collision — these functions share a path and would shadow each "+
-		"other on deploy (a path identifies a function regardless of method; give each a "+
-		"distinct path):\n  - %s", strings.Join(collisions, "\n  - "))
+	return fmt.Errorf("route collision — these functions share a method+path and would shadow "+
+		"each other on deploy (a function is identified by method AND path, so get:x and post:x "+
+		"are fine, but two post:x are not):\n  - %s", strings.Join(collisions, "\n  - "))
 }

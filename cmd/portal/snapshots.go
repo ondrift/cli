@@ -294,9 +294,8 @@ func (m *model) sliceURLFor(slice string) string {
 	}
 	host := strings.TrimPrefix(common.APIBaseURL, scheme)
 	host = strings.TrimPrefix(host, "api.")
-	if slice == "default" {
-		return scheme + m.user + "." + host
-	}
+	// Every slice — including "default" — is reached at <user>-<slice>.<root>;
+	// there is no bare <user>.<root> shortcut.
 	return scheme + m.user + "-" + slice + "." + host
 }
 

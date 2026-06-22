@@ -13,20 +13,21 @@ import (
 )
 
 func History() *cobra.Command {
-	return &cobra.Command{
+	var method string
+	cmd := &cobra.Command{
 		Use:     "history <function-name>",
 		Short:   "Show deployment history for a function",
-		Example: "  drift atomic history send-email",
+		Example: "  drift atomic history send-email\n  drift atomic history users --method get",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			function := args[0]
 
-			resp, err := common.DoRequest(
-				http.MethodGet,
-				common.APIBaseURL+"/ops/atomic/history?function="+url.QueryEscape(function),
-				nil,
-			)
+			target := common.APIBaseURL + "/ops/atomic/history?function=" + url.QueryEscape(function)
+			if method != "" {
+				target += "&method=" + url.QueryEscape(method)
+			}
+			resp, err := common.DoRequest(http.MethodGet, target, nil)
 			if err != nil {
 				return common.TransportError("fetch deployment history", err)
 			}
@@ -67,4 +68,6 @@ func History() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path")
+	return cmd
 }

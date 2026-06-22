@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -50,25 +51,28 @@ var atomicForce bool
 
 func getDeployCmd() *cobra.Command {
 	var (
-		planOnly      bool
-		noReconcile   bool
-		autoYes       bool
-		billingMonths int
-		envName       string
+		planOnly        bool
+		noReconcile     bool
+		autoYes         bool
+		billingMonths   int
+		envName         string
+		secretOverrides []string
+		noEnvFile       bool
 	)
 
 	cmd := &cobra.Command{
-		Use:     "deploy",
-		Short:   "Deploy all resources declared in a Driftfile manifest",
-		Example: "  drift project deploy\n  drift project deploy --plan\n  drift project deploy --env=staging\n  drift project deploy --no-slice-reconcile",
-		Args:    cobra.ExactArgs(0),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if envName != "" {
-				if err := os.Setenv("ENV", envName); err != nil {
-					return fmt.Errorf("set ENV=%s: %w", envName, err)
-				}
-			}
+		Use:   "deploy [environment]",
+		Short: "Deploy a project from its Driftfile (optionally for a named environment)",
+		Long: `Deploy every resource declared in the project's Driftfile.
 
+If the Driftfile declares environments, pass one as the positional argument to
+deploy that environment's merged shape (its overrides on top of the base);
+prod/production deploys under the bare project name, others under <name>-<env>.
+With no argument the deploy targets prod/production when declared, or the
+single slice otherwise.`,
+		Example: "  drift project deploy\n  drift project deploy staging\n  drift project deploy prod --yes\n  drift project deploy --plan",
+		Args:    cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))
 			if err != nil {
 				return fmt.Errorf("resolve manifest path: %w", err)
@@ -76,10 +80,62 @@ func getDeployCmd() *cobra.Command {
 			if _, err := os.Stat(manifestPath); err != nil {
 				return fmt.Errorf("no Driftfile in the current directory (looked for %s)", manifestPath)
 			}
+			projectDir := filepath.Dir(manifestPath)
+
+			// Environment selection: a positional argument is the primary
+			// selector; the --env flag is a fallback (and the legacy ${ENV}
+			// setter for projects that declare no environments).
+			positionalEnv := ""
+			if len(args) == 1 {
+				positionalEnv = args[0]
+			}
+			selectedEnv := positionalEnv
+			if selectedEnv == "" {
+				selectedEnv = envName
+			}
+
+			// Variable origin hierarchy (highest first): Driftfile-hardcoded
+			// literals > terminal environment > --secret/--env overrides >
+			// .env.<env> > .env. Applied before parsing so ${VAR}/$ENVREF
+			// resolve against it and hook shells inherit ENV. ENV binds to the
+			// selected environment.
+			overrides := secretOverrides
+			if selectedEnv != "" {
+				overrides = append([]string{"ENV=" + selectedEnv}, overrides...)
+			}
+			vars, err := applyVariableSources(projectDir, overrides, !noEnvFile, selectedEnv)
+			if err != nil {
+				return err
+			}
+			vars.report()
+
+			// pre_deploy hooks run BEFORE the full parse so a build can produce
+			// the artifacts (e.g. a canvas dist dir) the parse then validates.
+			// Skipped in --plan (a dry run never builds).
+			hooks, err := ParseHooks(manifestPath)
+			if err != nil {
+				return err
+			}
+			if !planOnly {
+				if err := runHooks("pre_deploy", hooks.PreDeploy, projectDir); err != nil {
+					return err
+				}
+			}
 
 			m, err := ParseDriftfile(manifestPath)
 			if err != nil {
 				return err
+			}
+
+			// Merge the selected environment's overrides onto the base slice
+			// and derive its slice name. After this, m.Slice is the effective
+			// slice and every downstream step is environment-agnostic.
+			resolvedEnv, err := m.SelectEnvironment(selectedEnv, positionalEnv != "")
+			if err != nil {
+				return err
+			}
+			if resolvedEnv != "" {
+				fmt.Printf("  %s environment %s → slice %s\n", common.Hint("·"), resolvedEnv, common.Highlight(m.Slice.Name))
 			}
 
 			// Loud, pre-network preflight: reject route collisions before the
@@ -133,6 +189,14 @@ func getDeployCmd() *cobra.Command {
 			elapsed := time.Since(start).Seconds()
 			fmt.Printf("  %s\n", common.Hint(fmt.Sprintf("Done in %.1fs!", elapsed)))
 
+			// post_deploy hooks run against the now-live slice (typically a
+			// smoke test). A failure leaves the slice deployed — it's already
+			// live — but returns non-zero so CI and the user see it.
+			if err := runHooks("post_deploy", hooks.PostDeploy, projectDir); err != nil {
+				fmt.Printf("\n  %s the slice is deployed and live, but a post_deploy hook failed\n", common.Cross())
+				return err
+			}
+
 			if siteURL := buildSiteURL(); siteURL != "" {
 				fmt.Printf("\n  %s  %s\n", common.Check(), siteURL)
 			}
@@ -146,8 +210,35 @@ func getDeployCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&atomicForce, "force", false, "Redeploy every function even if its source is unchanged")
 	cmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Auto-confirm the cost prompt (for CI)")
 	cmd.Flags().IntVar(&billingMonths, "billing-period-months", 1, "Billing period for new slices and grow operations")
-	cmd.Flags().StringVar(&envName, "env", "", "Sets ENV before parsing the Driftfile, so ${ENV} substitutes to this value (typical: staging, prod)")
+	cmd.Flags().StringVar(&envName, "env", "", "Environment to deploy (same as the positional argument); also sets ${ENV}")
+	cmd.Flags().StringArrayVar(&secretOverrides, "secret", nil, "Override a variable for ${VAR}/$ENVREF resolution: KEY=value (repeatable). Yields to a variable already set in the environment; beats the .env file.")
+	cmd.Flags().BoolVar(&noEnvFile, "no-env-file", false, "Do not read the .env / .env.<env> file sitting next to the Driftfile")
 	return cmd
+}
+
+// runHooks runs one Driftfile lifecycle phase: each command in order, via the
+// shell, from the project root, streaming output. A non-zero exit aborts with
+// the failing command surfaced. An empty list is a no-op. Commands are the
+// user's own (same trust as a Makefile or package.json script) and run on the
+// user's machine, not in a slice — the one-subprocess sandbox rule is a slice
+// runtime constraint and does not apply here.
+func runHooks(phase string, cmds []string, dir string) error {
+	if len(cmds) == 0 {
+		return nil
+	}
+	fmt.Printf("\n  %s %s\n", common.Hint("hooks ·"), phase)
+	for _, c := range cmds {
+		fmt.Printf("    %s %s\n", common.Hint("$"), c)
+		h := exec.Command("sh", "-c", c) // #nosec G204 — the user's own Driftfile, run on the user's machine
+		h.Dir = dir
+		h.Stdout = os.Stdout
+		h.Stderr = os.Stderr
+		h.Stdin = os.Stdin
+		if err := h.Run(); err != nil {
+			return fmt.Errorf("%s hook failed (%s): %w", phase, c, err)
+		}
+	}
+	return nil
 }
 
 // ─── Plan mode ──────────────────────────────────────────────────────
@@ -350,16 +441,16 @@ func checkRouteCollisions(m *Manifest) error {
 		}
 		sort.Strings(parts)
 		collisions = append(collisions,
-			fmt.Sprintf("path %q is claimed by %d functions: %s", key, len(refs), strings.Join(parts, ", ")))
+			fmt.Sprintf("%q is claimed by %d functions: %s", key, len(refs), strings.Join(parts, ", ")))
 	}
 	if len(collisions) == 0 {
 		return nil
 	}
 	sort.Strings(collisions)
 	return fmt.Errorf(
-		"route collision — these functions share a path and would shadow each other on deploy "+
-			"(a path identifies a function regardless of method, so give each a distinct path, "+
-			"e.g. get:items-list + post:items):\n  - %s",
+		"route collision — these functions share a method+path and would shadow each other on "+
+			"deploy (a function is identified by method AND path, so get:items + post:items is "+
+			"fine, but two post:items is not):\n  - %s",
 		strings.Join(collisions, "\n  - "))
 }
 
@@ -996,8 +1087,7 @@ func buildSiteURL() string {
 	}
 	host := strings.TrimPrefix(apiURL, scheme)
 	host = strings.TrimPrefix(host, "api.")
-	if slice == "default" {
-		return scheme + username + "." + host
-	}
+	// Every slice — including the one named "default" — is reached at
+	// <username>-<slice>.<root>. There is no bare <username>.<root> shortcut.
 	return scheme + username + "-" + slice + "." + host
 }

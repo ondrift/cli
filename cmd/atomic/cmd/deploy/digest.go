@@ -181,7 +181,19 @@ func ElementDigest(dir, name string) (string, error) {
 // local function against its last-deployed digest.
 type deployedAtomic struct {
 	FunctionName string `json:"function_name"`
+	Method       string `json:"method"`
 	Digest       string `json:"digest"`
+}
+
+// deployedKey is the identity a deployed record is filed under in the digest
+// map — it must equal ElementFunc.DeployKey() for the local function. For HTTP
+// that's "<method>:<path>" (so get:x and post:x are distinct); a queue handler's
+// stored method is "queue", so its key stays the queue name (the function_name).
+func deployedKey(method, functionName string) string {
+	if method != "" && method != "queue" {
+		return method + ":" + functionName
+	}
+	return functionName
 }
 
 // deployedDigestsTimeout bounds the best-effort "what's already deployed?"
@@ -218,16 +230,17 @@ func DeployedDigests() (map[string]string, error) {
 	out := make(map[string]string, len(records))
 	for _, r := range records {
 		if r.FunctionName != "" && r.Digest != "" {
-			out[r.FunctionName] = r.Digest
+			out[deployedKey(r.Method, r.FunctionName)] = r.Digest
 		}
 	}
 	return out, nil
 }
 
-// FunctionName returns the identifier the platform stores as `function_name`
-// for the function at dir: meta.Path for HTTP triggers, the directory basename
-// for queue triggers (mirroring DeployFolder). It is the key under which the
-// last-deployed digest is looked up.
+// FunctionName returns the deploy identity for the function at dir — the key
+// under which the last-deployed digest is looked up and the legacy route
+// collision is checked. For HTTP that's "<method>:<path>" (so get:x and post:x
+// are distinct functions); for a queue trigger it's the directory basename
+// (mirroring DeployFolder).
 func FunctionName(dir string) (string, error) {
 	meta, err := atomic_common.ParseAtomicMetadataFromDir(dir)
 	if err != nil {
@@ -240,5 +253,5 @@ func FunctionName(dir string) (string, error) {
 		}
 		return filepath.Base(abs), nil
 	}
-	return meta.Path, nil
+	return deployedKey(meta.Method, meta.Path), nil
 }

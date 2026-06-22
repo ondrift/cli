@@ -168,7 +168,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	if v := m.Slice.Atomic.FunctionMemory; v != "" {
 		bytes, err := parseSizeBytes(v)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("slice.atomic.function_memory: %v", err))
+			errs = append(errs, fmt.Sprintf("atomic.function_memory: %v", err))
 		} else {
 			cfg.Atomic.MaxFunctionMemoryBytes = bytes
 		}
@@ -176,7 +176,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	if v := m.Slice.Atomic.FunctionTimeout; v != "" {
 		secs, err := parseDurationSeconds(v)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("slice.atomic.function_timeout: %v", err))
+			errs = append(errs, fmt.Sprintf("atomic.function_timeout: %v", err))
 		} else {
 			cfg.Atomic.MaxFunctionRuntimeInSeconds = secs
 		}
@@ -184,7 +184,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	if v := m.Slice.Atomic.RateLimit; v != "" {
 		rpm, err := parseRatePerMinute(v)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("slice.atomic.rate_limit: %v", err))
+			errs = append(errs, fmt.Sprintf("atomic.rate_limit: %v", err))
 		} else {
 			cfg.Atomic.MaxNumberOfRequestsPerMinute = rpm
 		}
@@ -194,7 +194,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	if v := m.Slice.Backbone.NoSQLStorage; v != "" {
 		bytes, err := parseSizeBytes(v)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("slice.backbone.nosql_storage: %v", err))
+			errs = append(errs, fmt.Sprintf("backbone.nosql_storage: %v", err))
 		} else {
 			cfg.Backbone.NoSQL.MaxStorageBytes = bytes
 		}
@@ -202,7 +202,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	if v := m.Slice.Backbone.BlobMaxSize; v != "" {
 		bytes, err := parseSizeBytes(v)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("slice.backbone.blob_max_size: %v", err))
+			errs = append(errs, fmt.Sprintf("backbone.blob_max_size: %v", err))
 		} else {
 			cfg.Backbone.Blobs.MaxSizeInBytesEach = bytes
 		}
@@ -216,7 +216,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	if v := m.Slice.Backbone.SQLStorage; v != "" {
 		bytes, err := parseSizeBytes(v)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("slice.backbone.sql_storage: %v", err))
+			errs = append(errs, fmt.Sprintf("backbone.sql_storage: %v", err))
 		} else {
 			cfg.Backbone.SQL.MaxStorageBytes = bytes
 		}
@@ -224,7 +224,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	if v := m.Slice.Backbone.SecretMaxSize; v != "" {
 		bytes, err := parseSizeBytes(v)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("slice.backbone.secret_max_size: %v", err))
+			errs = append(errs, fmt.Sprintf("backbone.secret_max_size: %v", err))
 		} else {
 			cfg.Backbone.Secrets.MaxSizeInBytesEach = bytes
 		}
@@ -237,7 +237,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	if v := m.Slice.Canvas.CanvasSize; v != "" {
 		bytes, err := parseSizeBytes(v)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("slice.canvas.canvas_size: %v", err))
+			errs = append(errs, fmt.Sprintf("canvas.canvas_size: %v", err))
 		} else {
 			cfg.Canvas.TotalMaxSizeInBytes = bytes
 		}
@@ -247,7 +247,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	if v := m.Slice.LogRetention; v != "" {
 		hours, err := parseDurationHours(v)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("slice.log_retention: %v", err))
+			errs = append(errs, fmt.Sprintf("log_retention: %v", err))
 		} else {
 			cfg.Atomic.MaxNumberOfHoursForLogRetention = hours
 		}
@@ -255,7 +255,7 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	if v := m.Slice.BackupRetention; v != "" {
 		days, err := parseDurationDays(v)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("slice.backup_retention: %v", err))
+			errs = append(errs, fmt.Sprintf("backup_retention: %v", err))
 		} else {
 			cfg.Backbone.BackupRetentionDays = days
 		}

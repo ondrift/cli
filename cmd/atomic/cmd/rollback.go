@@ -13,10 +13,11 @@ import (
 )
 
 func Rollback() *cobra.Command {
-	return &cobra.Command{
+	var method string
+	cmd := &cobra.Command{
 		Use:     "rollback <function-name> <position>",
 		Short:   "Roll back a function to a previous deployment (see drift atomic history)",
-		Example: "  drift atomic rollback send-email 2",
+		Example: "  drift atomic rollback send-email 2\n  drift atomic rollback users 2 --method get",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -28,6 +29,7 @@ func Rollback() *cobra.Command {
 
 			payload, _ := json.Marshal(map[string]any{
 				"name":     function,
+				"method":   method,
 				"position": position,
 			})
 
@@ -68,4 +70,6 @@ func Rollback() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path")
+	return cmd
 }

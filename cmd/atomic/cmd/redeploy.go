@@ -12,16 +12,17 @@ import (
 )
 
 func Redeploy() *cobra.Command {
-	return &cobra.Command{
+	var method string
+	cmd := &cobra.Command{
 		Use:     "redeploy <function-name>",
 		Short:   "Re-deploy the last known artifact for a function",
-		Example: "  drift atomic redeploy send-email",
+		Example: "  drift atomic redeploy send-email\n  drift atomic redeploy users --method get",
 		GroupID: "operations",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			function := args[0]
 
-			payload, _ := json.Marshal(map[string]string{"name": function})
+			payload, _ := json.Marshal(map[string]string{"name": function, "method": method})
 
 			s := common.StartSpinner("", "Redeploying "+function+"...")
 
@@ -47,4 +48,6 @@ func Redeploy() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVarP(&method, "method", "m", "", "HTTP method, to disambiguate get:x from post:x at the same path")
+	return cmd
 }

@@ -94,9 +94,8 @@ func TestParseDriftfile_MissingEnvref(t *testing.T) {
 func TestParseDriftfile_InvalidName(t *testing.T) {
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
-slice:
-  name: BAD_Name_With_Underscores
-  canvas: ./canvas
+name: BAD_Name_With_Underscores
+canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
 
@@ -104,8 +103,8 @@ slice:
 	if err == nil {
 		t.Fatal("expected validation error for invalid name, got nil")
 	}
-	if !contains(err.Error(), "slice.name") {
-		t.Errorf("error should mention slice.name, got: %s", err)
+	if !contains(err.Error(), "name") {
+		t.Errorf("error should mention the name field, got: %s", err)
 	}
 }
 
@@ -114,9 +113,8 @@ slice:
 func TestParseDriftfile_CanvasShorthandString(t *testing.T) {
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
-slice:
-  name: hello
-  canvas: ./canvas
+name: hello
+canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
 
@@ -134,12 +132,11 @@ slice:
 func TestParseDriftfile_AtomicShorthandList(t *testing.T) {
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
-slice:
-  name: hello
-  atomic:
-    - foo
-    - bar
-  canvas: ./canvas
+name: hello
+atomic:
+  - foo
+  - bar
+canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
 	mustMkdir(t, filepath.Join(tmp, "atomic", "foo"))
@@ -165,14 +162,13 @@ slice:
 func TestParseDriftfile_SQLShorthandString(t *testing.T) {
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
-slice:
-  name: hello
-  backbone:
-    sql:
-      - ledger
-      - name: audit
-        schema: ./sql/audit.sql
-  canvas: ./canvas
+name: hello
+backbone:
+  sql:
+    - ledger
+    - name: audit
+      schema: ./sql/audit.sql
+canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
 
@@ -199,22 +195,21 @@ func writeRestaurantFixture(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
-slice:
-  name: la-cucina
-  atomic:
-    - get-menu
-    - submit-reservation
-    - confirm-reservation
-  backbone:
-    nosql: [reservations]
-    queues: [reservation-queue]
-    cache:
-      menu: ./backbone/menu.json
-    secrets:
-      RESTAURANT_NAME: "La Cucina"
-      RESEND_API_KEY:  $RESEND_API_KEY
-      SENDER_EMAIL:    $SENDER_EMAIL
-  canvas: ./canvas
+name: la-cucina
+atomic:
+  - get-menu
+  - submit-reservation
+  - confirm-reservation
+backbone:
+  nosql: [reservations]
+  queues: [reservation-queue]
+  cache:
+    menu: ./backbone/menu.json
+  secrets:
+    RESTAURANT_NAME: "La Cucina"
+    RESEND_API_KEY:  $RESEND_API_KEY
+    SENDER_EMAIL:    $SENDER_EMAIL
+canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
 	mustMkdir(t, filepath.Join(tmp, "atomic", "get-menu"))
@@ -231,12 +226,11 @@ slice:
 func TestCheckRouteCollisions(t *testing.T) {
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
-slice:
-  name: shop
-  atomic:
-    - items-get
-    - items-post
-  canvas: ./canvas
+name: shop
+atomic:
+  - items-get
+  - items-post
+canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
 	mustWrite(t, filepath.Join(tmp, "atomic", "items-get", "main.go"),
@@ -248,23 +242,25 @@ slice:
 	if err != nil {
 		t.Fatalf("ParseDriftfile failed: %v", err)
 	}
-	err = checkRouteCollisions(m)
-	if err == nil {
-		t.Fatal("expected a route collision error for get:items + post:items, got nil")
-	}
-	if !strings.Contains(err.Error(), "items") || !strings.Contains(err.Error(), "collision") {
-		t.Errorf("collision error should name the path: %v", err)
+	// get:items and post:items are DISTINCT functions — method is part of the
+	// identity — so they must NOT collide.
+	if err := checkRouteCollisions(m); err != nil {
+		t.Errorf("get:items + post:items are distinct functions, should not collide: %v", err)
 	}
 
-	// Give the GET twin a distinct path — no collision.
+	// Two functions with the SAME method+path genuinely collide.
 	mustWrite(t, filepath.Join(tmp, "atomic", "items-get", "main.go"),
-		"// @atomic http=get:items-list auth=none\npackage main\n")
+		"// @atomic http=post:items auth=none\npackage main\n") // now also post:items
 	m2, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
 	if err != nil {
 		t.Fatalf("ParseDriftfile failed: %v", err)
 	}
-	if err := checkRouteCollisions(m2); err != nil {
-		t.Errorf("distinct paths should not collide: %v", err)
+	err = checkRouteCollisions(m2)
+	if err == nil {
+		t.Fatal("expected a collision error for two post:items, got nil")
+	}
+	if !strings.Contains(err.Error(), "items") || !strings.Contains(err.Error(), "collision") {
+		t.Errorf("collision error should name the route: %v", err)
 	}
 }
 
@@ -287,15 +283,14 @@ func mustMkdir(t *testing.T, path string) {
 
 // TestParseDriftfile_BraceVarSubstitution covers the env-aware
 // Driftfile feature: ${VAR} placeholders resolve from os.Environ
-// before YAML parsing. Typical use: `slice.name: ${ENV}-myapp`
-// resolved by `drift project deploy --env=prod` setting ENV=prod.
+// before YAML parsing. (With project-level environments the slice name is
+// usually derived, not written; ${VAR} still works anywhere in the file.)
 func TestParseDriftfile_BraceVarSubstitution(t *testing.T) {
 	t.Setenv("ENV", "staging")
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
-slice:
-  name: ${ENV}-hello
-  canvas: ./canvas
+name: ${ENV}-hello
+canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
 
@@ -313,9 +308,8 @@ slice:
 func TestParseDriftfile_BraceVarMissing(t *testing.T) {
 	tmp := t.TempDir()
 	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
-slice:
-  name: ${ENV}-${REGION}-app
-  canvas: ./canvas
+name: ${ENV}-${REGION}-app
+canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
 
@@ -326,6 +320,192 @@ slice:
 	msg := err.Error()
 	if !contains(msg, "ENV") || !contains(msg, "REGION") {
 		t.Errorf("error should mention both unset vars, got: %s", msg)
+	}
+}
+
+// TestEnvironments covers the project-level environments feature: per-env
+// config overrides deep-merge onto the base, the resource set is shared,
+// un-overridden knobs inherit, and the slice name is derived.
+func TestEnvironments(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+name: snip
+log_retention: 30d
+atomic:
+  rate_limit: 5000/min
+  function_memory: 128MB
+  functions: [redirect]
+backbone:
+  nosql_storage: 500MB
+  nosql: [links]
+canvas: ./web
+environments:
+  prod: {}
+  staging:
+    log_retention: 3d
+    atomic: { rate_limit: 200/min, function_memory: 64MB }
+    backbone: { nosql_storage: 50MB }
+  dev:
+    atomic: { rate_limit: 20/min }
+`)
+	mustMkdir(t, filepath.Join(tmp, "web"))
+	mustMkdir(t, filepath.Join(tmp, "atomic", "redirect"))
+
+	parse := func() *Manifest {
+		m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+		if err != nil {
+			t.Fatalf("ParseDriftfile: %v", err)
+		}
+		return m
+	}
+
+	// prod → bare name; base values untouched.
+	m := parse()
+	if env, err := m.SelectEnvironment("prod", true); err != nil || env != "prod" {
+		t.Fatalf("select prod: env=%q err=%v", env, err)
+	}
+	if m.Slice.Name != "snip" {
+		t.Errorf("prod name = %q, want snip", m.Slice.Name)
+	}
+	if m.Slice.Atomic.RateLimit != "5000/min" || m.Slice.LogRetention != "30d" {
+		t.Errorf("prod values changed: rate=%q retention=%q", m.Slice.Atomic.RateLimit, m.Slice.LogRetention)
+	}
+
+	// staging → suffixed name; scalar overrides applied; resource set shared.
+	m = parse()
+	if _, err := m.SelectEnvironment("staging", true); err != nil {
+		t.Fatal(err)
+	}
+	if m.Slice.Name != "snip-staging" {
+		t.Errorf("staging name = %q, want snip-staging", m.Slice.Name)
+	}
+	if m.Slice.Atomic.RateLimit != "200/min" || m.Slice.Atomic.FunctionMemory != "64MB" {
+		t.Errorf("staging atomic overrides not applied: %+v", m.Slice.Atomic)
+	}
+	if m.Slice.LogRetention != "3d" || m.Slice.Backbone.NoSQLStorage != "50MB" {
+		t.Errorf("staging overrides not applied: retention=%q nosql_storage=%q", m.Slice.LogRetention, m.Slice.Backbone.NoSQLStorage)
+	}
+	if len(m.Slice.Atomic.Functions) != 1 || m.Slice.Atomic.Functions[0].Name != "redirect" {
+		t.Errorf("staging functions = %+v, want shared [redirect]", m.Slice.Atomic.Functions)
+	}
+	if len(m.Slice.Backbone.NoSQL) != 1 || m.Slice.Backbone.NoSQL[0].Name != "links" {
+		t.Errorf("staging nosql = %+v, want shared [links]", m.Slice.Backbone.NoSQL)
+	}
+
+	// dev → only rate overridden; everything else inherits the base.
+	m = parse()
+	if _, err := m.SelectEnvironment("dev", true); err != nil {
+		t.Fatal(err)
+	}
+	if m.Slice.Name != "snip-dev" || m.Slice.Atomic.RateLimit != "20/min" {
+		t.Errorf("dev name/rate = %q/%q", m.Slice.Name, m.Slice.Atomic.RateLimit)
+	}
+	if m.Slice.Atomic.FunctionMemory != "128MB" || m.Slice.LogRetention != "30d" {
+		t.Errorf("dev should inherit base mem/retention: mem=%q retention=%q", m.Slice.Atomic.FunctionMemory, m.Slice.LogRetention)
+	}
+
+	// Default (no arg) resolves to prod when present.
+	m = parse()
+	if env, err := m.SelectEnvironment("", false); err != nil || env != "prod" {
+		t.Errorf("default select: env=%q err=%v, want prod", env, err)
+	}
+
+	// Unknown environment errors.
+	m = parse()
+	if _, err := m.SelectEnvironment("nope", true); err == nil {
+		t.Error("expected error for unknown environment")
+	}
+}
+
+// TestEnvironmentsBareList covers the `environments: [a, b]` sugar: each named
+// environment inherits the base shape unchanged; the name still derives.
+func TestEnvironmentsBareList(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+name: hello
+canvas: ./canvas
+environments: [prod, staging]
+`)
+	mustMkdir(t, filepath.Join(tmp, "canvas"))
+
+	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err != nil {
+		t.Fatalf("ParseDriftfile: %v", err)
+	}
+	if len(m.Environments) != 2 {
+		t.Fatalf("environments count = %d, want 2", len(m.Environments))
+	}
+	if _, err := m.SelectEnvironment("staging", true); err != nil {
+		t.Fatal(err)
+	}
+	if m.Slice.Name != "hello-staging" {
+		t.Errorf("name = %q, want hello-staging", m.Slice.Name)
+	}
+}
+
+// TestSelectEnvironmentNoEnvironments: a single-slice project ignores an empty
+// selection but rejects an explicit one.
+func TestSelectEnvironmentNoEnvironments(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), "name: solo\ncanvas: ./canvas\n")
+	mustMkdir(t, filepath.Join(tmp, "canvas"))
+
+	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env, err := m.SelectEnvironment("", false); err != nil || env != "" {
+		t.Errorf("no-env default: env=%q err=%v", env, err)
+	}
+	if m.Slice.Name != "solo" {
+		t.Errorf("name = %q, want solo", m.Slice.Name)
+	}
+	if _, err := m.SelectEnvironment("staging", true); err == nil {
+		t.Error("expected error: explicit env on a project that declares none")
+	}
+}
+
+// TestEnvironmentRejectsName: an override block may not set name.
+func TestEnvironmentRejectsName(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+name: hello
+canvas: ./canvas
+environments:
+  staging:
+    name: other
+`)
+	mustMkdir(t, filepath.Join(tmp, "canvas"))
+
+	_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err == nil || !contains(err.Error(), "must not set name") {
+		t.Errorf("expected a 'must not set name' error, got: %v", err)
+	}
+}
+
+// TestParseHooks reads the hooks block without validating the rest of the
+// project (so a pre_deploy build can run before the full parse).
+func TestParseHooks(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+name: hello
+canvas: ./dist
+hooks:
+  pre_deploy:
+    - npm run build
+    - npm run lint
+  post_deploy: [./smoke.sh]
+`)
+	// Note: ./dist does NOT exist — ParseHooks must not care.
+	h, err := ParseHooks(filepath.Join(tmp, "Driftfile"))
+	if err != nil {
+		t.Fatalf("ParseHooks: %v", err)
+	}
+	if len(h.PreDeploy) != 2 || h.PreDeploy[0] != "npm run build" {
+		t.Errorf("pre_deploy = %+v", h.PreDeploy)
+	}
+	if len(h.PostDeploy) != 1 || h.PostDeploy[0] != "./smoke.sh" {
+		t.Errorf("post_deploy = %+v", h.PostDeploy)
 	}
 }
 
