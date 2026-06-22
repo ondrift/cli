@@ -87,6 +87,7 @@ type BackboneSecretsLimits struct {
 type BackboneBlobsLimits struct {
 	MaxCount           int
 	MaxSizeInBytesEach int
+	MaxStorageBytes    int // total blob storage (the billing driver)
 }
 
 type BackboneNoSQLLimits struct {
@@ -205,6 +206,14 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 			errs = append(errs, fmt.Sprintf("backbone.blob_max_size: %v", err))
 		} else {
 			cfg.Backbone.Blobs.MaxSizeInBytesEach = bytes
+		}
+	}
+	if v := m.Slice.Backbone.BlobStorage; v != "" {
+		bytes, err := parseSizeBytes(v)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("backbone.blob_storage: %v", err))
+		} else {
+			cfg.Backbone.Blobs.MaxStorageBytes = bytes
 		}
 	}
 	if v := m.Slice.Backbone.BlobMaxCount; v > 0 {

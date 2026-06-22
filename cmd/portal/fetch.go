@@ -451,14 +451,14 @@ type sliceCfg struct {
 		MaxFunctionMemoryBytes          int64
 	} `json:"atomic"`
 	Backbone struct {
-		Secrets             struct{ MaxCount, MaxSizeInBytesEach int }    `json:"secrets"`
-		Blobs               struct{ MaxCount, MaxSizeInBytesEach int }    `json:"blobs"`
-		NoSQL               struct{ MaxCollections, MaxStorageBytes int } `json:"nosql"`
-		SQL                 struct{ MaxDatabases, MaxStorageBytes int }   `json:"sql"`
-		Queues              struct{ MaxQueues, MaxDepthEach int }         `json:"queues"`
-		Realtime            struct{ MaxConcurrentConnections int }        `json:"realtime"`
-		Locks               struct{ MaxConcurrent int }                   `json:"locks"`
-		BackupRetentionDays int                                           `json:"backup_retention_days"`
+		Secrets             struct{ MaxCount, MaxSizeInBytesEach int }                  `json:"secrets"`
+		Blobs               struct{ MaxCount, MaxSizeInBytesEach, MaxStorageBytes int } `json:"blobs"`
+		NoSQL               struct{ MaxCollections, MaxStorageBytes int }               `json:"nosql"`
+		SQL                 struct{ MaxDatabases, MaxStorageBytes int }                 `json:"sql"`
+		Queues              struct{ MaxQueues, MaxDepthEach int }                       `json:"queues"`
+		Realtime            struct{ MaxConcurrentConnections int }                      `json:"realtime"`
+		Locks               struct{ MaxConcurrent int }                                 `json:"locks"`
+		BackupRetentionDays int                                                         `json:"backup_retention_days"`
 	} `json:"backbone"`
 }
 

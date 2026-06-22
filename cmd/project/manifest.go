@@ -185,9 +185,10 @@ type AlertEntry struct {
 
 type BackboneSection struct {
 	NoSQLStorage  string `yaml:"nosql_storage"`
-	SQLStorage    string `yaml:"sql_storage"` // storage per SQL database (e.g. "100MB")
+	SQLStorage    string `yaml:"sql_storage"`  // storage per SQL database (e.g. "100MB")
+	BlobStorage   string `yaml:"blob_storage"` // total blob storage (the billing driver, e.g. "1GB")
 	BlobMaxSize   string `yaml:"blob_max_size"`
-	BlobMaxCount  int    `yaml:"blob_max_count"`
+	BlobMaxCount  int    `yaml:"blob_max_count"` // free safety quota (not a price driver)
 	QueueMaxDepth int    `yaml:"queue_max_depth"`
 	SecretMaxSize string `yaml:"secret_max_size"` // max size of one secret value (e.g. "4KB")
 	Locks         int    `yaml:"locks"`           // max concurrent Backbone locks
@@ -855,6 +856,9 @@ func validate(m *Manifest) ParseErrors {
 	}
 	if v := b.BlobMaxSize; v != "" && !sizeRe.MatchString(v) {
 		errs = append(errs, fmt.Sprintf("backbone.blob_max_size %q must be an integer ending in KB, MB, or GB", v))
+	}
+	if v := b.BlobStorage; v != "" && !sizeRe.MatchString(v) {
+		errs = append(errs, fmt.Sprintf("backbone.blob_storage %q must be an integer ending in KB, MB, or GB", v))
 	}
 	if v := b.SQLStorage; v != "" && !sizeRe.MatchString(v) {
 		errs = append(errs, fmt.Sprintf("backbone.sql_storage %q must be an integer ending in KB, MB, or GB", v))
