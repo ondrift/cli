@@ -411,7 +411,12 @@ func createUserSourceArchive(absFolder, name string) (string, error) {
 	return archivePath, nil
 }
 
-func sendSourceToOperator(name, method, language, auth, element, stream string, secrets []string, sourcePath, userSourcePath string, triggers []TriggerSpec, digest string) error {
+// operatorSink is the default SlotSink: it uploads the built function to the
+// operator (the cloud deploy path). `drift project run` swaps in localSlotSink
+// to write the on-disk slot layout instead — see sink.go.
+func operatorSink(a FuncArtifact) error {
+	name, method, language, auth, element, stream := a.Name, a.Method, a.Language, a.Auth, a.Element, a.Stream
+	secrets, sourcePath, userSourcePath, triggers, digest := a.Secrets, a.SourcePath, a.UserSourcePath, a.Triggers, a.Digest
 	meta, err := json.Marshal(map[string]any{
 		"name":     name,
 		"method":   method,

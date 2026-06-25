@@ -10,7 +10,6 @@ package atomic_cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -54,9 +53,7 @@ func buildGoElementStage(srcDir, name string) (string, error) {
 
 	// Ensure a module exists (user functions may ship without a go.mod).
 	if _, statErr := os.Stat(filepath.Join(buildDir, "go.mod")); statErr != nil {
-		initCmd := exec.Command("go", "mod", "init", "atomic/"+safeTmpName(name)) // #nosec G204
-		initCmd.Dir = buildDir
-		if out, err := initCmd.CombinedOutput(); err != nil {
+		if out, err := runToolchain(toolchainCmd{lang: "go", dir: buildDir, name: "go", args: []string{"mod", "init", "atomic/" + safeTmpName(name)}}); err != nil {
 			os.RemoveAll(buildDir) // #nosec G104
 			return "", fmt.Errorf("go mod init error: %w\n%s", err, string(out))
 		}
@@ -66,16 +63,12 @@ func buildGoElementStage(srcDir, name string) (string, error) {
 	// explicitly (see atomic_common.DriftGoModule) to dodge the legacy nested
 	// `…/sdk/go` pseudo-version module. No version is pinned — @latest tracks
 	// new tags, so a new SDK release never touches the CLI.
-	getCmd := exec.Command("go", "get", atomic_common.DriftGoModule+"@latest") // #nosec G204
-	getCmd.Dir = buildDir
-	if out, err := getCmd.CombinedOutput(); err != nil {
+	if out, err := runToolchain(toolchainCmd{lang: "go", dir: buildDir, name: "go", args: []string{"get", atomic_common.DriftGoModule + "@latest"}}); err != nil {
 		os.RemoveAll(buildDir) // #nosec G104
 		return "", fmt.Errorf("go get %s@latest error: %w\n%s", atomic_common.DriftGoModule, err, string(out))
 	}
 
-	tidyCmd := exec.Command("go", "mod", "tidy") // #nosec G204
-	tidyCmd.Dir = buildDir
-	if out, err := tidyCmd.CombinedOutput(); err != nil {
+	if out, err := runToolchain(toolchainCmd{lang: "go", dir: buildDir, name: "go", args: []string{"mod", "tidy"}}); err != nil {
 		os.RemoveAll(buildDir) // #nosec G104
 		return "", fmt.Errorf("go mod tidy error: %w\n%s", err, string(out))
 	}
@@ -91,10 +84,7 @@ func buildGoEntrypoint(buildDir, funcName, method, binBase string) (string, erro
 	if err := generateMain(buildDir, funcName, method); err != nil {
 		return "", fmt.Errorf("failed to generate main.go: %w", err)
 	}
-	buildCmd := exec.Command("go", "build", "-o", binBase) // #nosec G204
-	buildCmd.Dir = buildDir
-	buildCmd.Env = append(os.Environ(), "GOOS=linux", "CGO_ENABLED=0")
-	if out, err := buildCmd.CombinedOutput(); err != nil {
+	if out, err := runToolchain(toolchainCmd{lang: "go", dir: buildDir, name: "go", args: []string{"build", "-o", binBase}, env: map[string]string{"GOOS": "linux", "CGO_ENABLED": "0"}}); err != nil {
 		return "", fmt.Errorf("go build error (%s): %w\n%s", funcName, err, string(out))
 	}
 	return filepath.Join(buildDir, binBase), nil

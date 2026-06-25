@@ -1,0 +1,8 @@
+[
+  { "name": "orders-api",    "type": "Microsoft.Web/sites",                       "kind": "functionapp,linux" },
+  { "name": "ordersdb",      "type": "Microsoft.DocumentDB/databaseAccounts",     "kind": "" },
+  { "name": "ordersstore",   "type": "Microsoft.Storage/storageAccounts",         "kind": "" },
+  { "name": "assetsstore",   "type": "Microsoft.Storage/storageAccounts",         "kind": "" },
+  { "name": "marketing-web", "type": "Microsoft.Web/staticSites",                 "kind": "" },
+  { "name": "app-insights",  "type": "Microsoft.Insights/components",             "kind": "" }
+]

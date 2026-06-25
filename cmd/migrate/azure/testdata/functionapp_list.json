@@ -1,0 +1,5 @@
+[
+  { "name": "orders-api",     "kind": "functionapp,linux", "siteConfig": { "linuxFxVersion": "Python|3.11" } },
+  { "name": "notify-worker",  "kind": "functionapp,linux", "siteConfig": { "linuxFxVersion": "Node|18" } },
+  { "name": "legacy-billing", "kind": "functionapp",        "siteConfig": { "linuxFxVersion": "DOTNET|8.0" } }
+]

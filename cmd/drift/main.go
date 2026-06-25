@@ -9,6 +9,7 @@ import (
 	atomic "github.com/ondrift/cli/cmd/atomic"
 	backbone "github.com/ondrift/cli/cmd/backbone"
 	canvas "github.com/ondrift/cli/cmd/canvas"
+	migrate "github.com/ondrift/cli/cmd/migrate"
 	portal "github.com/ondrift/cli/cmd/portal"
 	project "github.com/ondrift/cli/cmd/project"
 	slice "github.com/ondrift/cli/cmd/slice"
@@ -58,6 +59,9 @@ func main() {
 	rootCmd.AddCommand(
 		// Project (Driftfile-driven deploy + diff)
 		project.GetCmd(),
+
+		// Migrate (read-only lift-off from another cloud, e.g. Azure)
+		migrate.GetCmd(),
 
 		// Deployment planning
 		account.GetPlanCmd(),

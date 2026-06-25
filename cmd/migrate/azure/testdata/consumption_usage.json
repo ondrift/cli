@@ -1,0 +1,7 @@
+[
+  { "pretaxCost": "120.00", "currency": "EUR", "instanceName": "orders-api",   "meterDetails": { "meterCategory": "Azure Functions",        "meterName": "Execution Time" } },
+  { "pretaxCost": "45.50",  "currency": "EUR", "instanceName": "ordersdb",     "meterDetails": { "meterCategory": "Azure Cosmos DB",        "meterName": "RU/s provisioned" } },
+  { "pretaxCost": "30.00",  "currency": "EUR", "instanceName": "ordersstore",  "meterDetails": { "meterCategory": "Storage",                "meterName": "Hot Block Blob" } },
+  { "pretaxCost": "12.25",  "currency": "EUR", "instanceName": "egress",       "meterDetails": { "meterCategory": "Bandwidth",              "meterName": "Data Transfer Out" } },
+  { "pretaxCost": "60.00",  "currency": "EUR", "instanceName": "app-insights", "meterDetails": { "meterCategory": "Application Insights",   "meterName": "Data Ingestion" } }
+]

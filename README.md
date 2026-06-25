@@ -96,6 +96,23 @@ drift project deploy                   # …or deploy a whole app from a Driftfi
 | `drift project diff` | Preview what a deploy would change (never shrinks a slice). |
 | `drift plan <Driftfile>` | Estimate the monthly price of a configuration. |
 
+### Migrate — leave another cloud
+
+Free, read-only, and honest about the parts that don't fit. Drift never holds your
+cloud credentials or your data — every command runs locally with your own provider
+login. The first provider is Azure.
+
+| Command | Description |
+|---------|-------------|
+| `drift migrate azure estimate -g <rg>` | Read-only: map an Azure resource group's cost to the equivalent Drift slice. |
+| `drift migrate azure snapshot -g <rg> -o <dir>` | Read-only: pull function source (Python/Node, incl. Linux Consumption), Cosmos Mongo documents, blobs, queue messages (peeked, never dequeued), `$web` static sites, and app settings into a vendor-neutral folder you own. |
+| `drift migrate azure transform -i <dir> -o <dir>` | Offline, deterministic: rewrite the export into a deployable Drift project (validated `Driftfile` + scaffolds). |
+| `drift migrate azure apply <dir>` | Deploy the workspace; hard-refuses around anything in `REFUSED.md` unless `--accept-refusals`. |
+
+Anything that can't move is written to `REFUSED.md` with a reason; review it and
+`REPORT.md` before deploying. Cosmos export needs `mongoexport`; Linux Consumption
+source needs `squashfs-tools` — the tool prints the exact install if either is missing.
+
 ## Configuration
 
 | Variable | Purpose |

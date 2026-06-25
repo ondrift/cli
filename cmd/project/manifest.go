@@ -332,6 +332,27 @@ func ParseHooks(path string) (Hooks, error) {
 	return wrapper.Hooks, nil
 }
 
+// ParseProjectName cheaply decodes ONLY the top-level `name` — no validation,
+// no `${VAR}`/`$ENVREF` resolution — so commands that just need the project's
+// identity (e.g. `drift project stop`/`logs` finding the container) work without
+// the project's secrets being set in the environment.
+func ParseProjectName(path string) (string, error) {
+	data, err := os.ReadFile(path) // #nosec G304 — CLI reads the user's manifest by design
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	var wrapper struct {
+		Name string `yaml:"name"`
+	}
+	if err := yaml.Unmarshal(data, &wrapper); err != nil {
+		return "", fmt.Errorf("Driftfile: invalid YAML: %w", err)
+	}
+	if strings.TrimSpace(wrapper.Name) == "" {
+		return "", fmt.Errorf("Driftfile has no name")
+	}
+	return wrapper.Name, nil
+}
+
 // ─── Environment selection + merge ──────────────────────────────────
 
 // SelectEnvironment resolves the deploy target for the chosen environment:

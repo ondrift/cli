@@ -93,6 +93,36 @@ func buildRust(absFolder, method, name string) (string, error) {
 	if runtime.GOARCH == "arm64" {
 		target = "aarch64-unknown-linux-musl"
 	}
+
+	// `drift project run` compiles in the rust image (the host needs no Rust);
+	// the cloud path uses the host rustup toolchain. Both write the binary to the
+	// same target/<triple>/release path read below.
+	if toolchainContainerMode {
+		if out, err := runRustContainer(stageDir, target); err != nil {
+			return "", fmt.Errorf("cargo build error (container, target %s): %w\n%s\n%s", target, err, string(out), rustBuildHint(string(out), target))
+		}
+	} else if err := buildRustHost(stageDir, target); err != nil {
+		return "", err
+	}
+
+	binaryPath := filepath.Join(stageDir, "target", target, "release", "atomic-function")
+	outputPath := filepath.Join(os.TempDir(), fmt.Sprintf("drift-rust-%s", safeTmpName(name)))
+	data, err := os.ReadFile(binaryPath) // #nosec G304
+	if err != nil {
+		return "", fmt.Errorf("read compiled binary: %w", err)
+	}
+	if err := os.WriteFile(outputPath, data, 0o755); err != nil { // #nosec G306 G703 -- the compiled binary must be executable by the runner
+		return "", fmt.Errorf("write binary: %w", err)
+	}
+
+	return outputPath, nil
+}
+
+// buildRustHost compiles the staged crate with the host's rustup toolchain,
+// linking via the bundled rust-lld so no external musl cross-linker is needed
+// (deploy Rust with rustup alone). Extracted verbatim from the cloud build path;
+// `drift project run` uses runRustContainer instead.
+func buildRustHost(stageDir, target string) error {
 	cmd := exec.Command("cargo", "build", "--release", "--target", target) // #nosec G204
 	cmd.Dir = stageDir
 	cmd.Env = os.Environ()
@@ -128,20 +158,9 @@ func buildRust(absFolder, method, name string) (string, error) {
 	}
 
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("cargo build error (target %s): %w\n%s\n%s", target, err, string(out), rustBuildHint(string(out), target))
+		return fmt.Errorf("cargo build error (target %s): %w\n%s\n%s", target, err, string(out), rustBuildHint(string(out), target))
 	}
-
-	binaryPath := filepath.Join(stageDir, "target", target, "release", "atomic-function")
-	outputPath := filepath.Join(os.TempDir(), fmt.Sprintf("drift-rust-%s", safeTmpName(name)))
-	data, err := os.ReadFile(binaryPath) // #nosec G304
-	if err != nil {
-		return "", fmt.Errorf("read compiled binary: %w", err)
-	}
-	if err := os.WriteFile(outputPath, data, 0o755); err != nil { // #nosec G306 G703 -- the compiled binary must be executable by the runner
-		return "", fmt.Errorf("write binary: %w", err)
-	}
-
-	return outputPath, nil
+	return nil
 }
 
 // findRustLLD locates the toolchain's bundled rust-lld linker under the

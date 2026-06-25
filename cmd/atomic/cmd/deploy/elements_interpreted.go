@@ -12,7 +12,6 @@ package atomic_cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -146,12 +145,20 @@ func installPythonDeps(absFolder, stageDir string) error {
 	if _, err := os.Stat(reqPath); err != nil {
 		return nil
 	}
-	vendorDir := filepath.Join(stageDir, "vendor")
+	// Stage requirements.txt next to the source (as node/php/ruby do their
+	// manifests) so the install runs entirely within stageDir with relative
+	// paths only — which keeps it bind-mountable when the build runs in a
+	// container (absolute host paths in args wouldn't resolve at the /w mount).
+	data, rerr := os.ReadFile(reqPath) // #nosec G304 -- controlled base dir
+	if rerr != nil {
+		return fmt.Errorf("read requirements.txt: %w", rerr)
+	}
+	if werr := os.WriteFile(filepath.Join(stageDir, "requirements.txt"), data, 0o644); werr != nil { // #nosec G306
+		return fmt.Errorf("write staged requirements.txt: %w", werr)
+	}
 	// Mirror build_python.go: install the manifest verbatim into vendor/. No
 	// --platform/--only-binary — a git-source dep (the SDK) isn't a prebuilt wheel.
-	cmd := exec.Command("pip3", "install", "-t", vendorDir, "-r", reqPath, "--quiet") // #nosec G204
-	cmd.Dir = absFolder
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := runToolchain(toolchainCmd{lang: "python", dir: stageDir, name: "pip3", args: []string{"install", "-t", "vendor", "-r", "requirements.txt", "--quiet"}}); err != nil {
 		return fmt.Errorf("pip install error: %w\n%s", err, string(out))
 	}
 	return nil
@@ -174,9 +181,7 @@ func installNodeDeps(absFolder, stageDir string) error {
 	if runtime.GOARCH == "arm64" {
 		npmCPU = "arm64"
 	}
-	cmd := exec.Command("npm", "install", "--production", "--silent", "--os=linux", "--cpu="+npmCPU) // #nosec G204
-	cmd.Dir = stageDir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := runToolchain(toolchainCmd{lang: "node", dir: stageDir, name: "npm", args: []string{"install", "--production", "--silent", "--os=linux", "--cpu=" + npmCPU}}); err != nil {
 		return fmt.Errorf("npm install error: %w\n%s", err, string(out))
 	}
 	return nil
@@ -199,19 +204,25 @@ func installRubyDeps(absFolder, stageDir string) error {
 	if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "Gemfile.lock")); lerr == nil { // #nosec G304
 		_ = os.WriteFile(filepath.Join(stageDir, "Gemfile.lock"), lockData, 0o644) // #nosec G306
 	}
-	rb, ferr := atomic_common.FindRuby()
-	if ferr != nil {
-		return ferr
+	// --standalone emits vendor/bundle/bundler/setup.rb which the wrapper loads
+	// without requiring bundler at runtime. BUNDLE_PATH/WITHOUT go through env so
+	// this works across bundler 2.x–4.x. Host build resolves a Ruby >= 3.0 (Apple's
+	// 2.6 is too old); the container build uses the image's bundle and needs none.
+	tc := toolchainCmd{
+		lang: "ruby", dir: stageDir, name: "bundle",
+		args: []string{"install", "--standalone", "--quiet"},
+		env:  map[string]string{"BUNDLE_PATH": "vendor/bundle", "BUNDLE_WITHOUT": "development:test"},
 	}
-	cmd := exec.Command(rb.Bundle, "install", "--standalone", "--quiet") // #nosec G204 -- bundle path from toolchain discovery
-	cmd.Dir = stageDir
-	cmd.Env = append(os.Environ(),
-		"PATH="+rb.BinDir+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"BUNDLE_PATH=vendor/bundle",
-		"BUNDLE_WITHOUT=development:test",
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("bundle install error (ruby %s): %w\n%s", rb.Version, err, string(out))
+	rbVer := "image"
+	if !toolchainContainerMode {
+		rb, ferr := atomic_common.FindRuby()
+		if ferr != nil {
+			return ferr
+		}
+		tc.hostName, tc.hostPath, rbVer = rb.Bundle, rb.BinDir, rb.Version
+	}
+	if out, err := runToolchain(tc); err != nil {
+		return fmt.Errorf("bundle install error (ruby %s): %w\n%s", rbVer, err, string(out))
 	}
 	return nil
 }
@@ -233,9 +244,7 @@ func installPHPDeps(absFolder, stageDir string) error {
 	if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "composer.lock")); lerr == nil { // #nosec G304
 		_ = os.WriteFile(filepath.Join(stageDir, "composer.lock"), lockData, 0o644) // #nosec G306
 	}
-	cmd := exec.Command("composer", "install", "--no-dev", "--ignore-platform-reqs", "--quiet", "--no-interaction") // #nosec G204
-	cmd.Dir = stageDir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := runToolchain(toolchainCmd{lang: "php", dir: stageDir, name: "composer", args: []string{"install", "--no-dev", "--ignore-platform-reqs", "--quiet", "--no-interaction"}}); err != nil {
 		return fmt.Errorf("composer install error: %w\n%s", err, string(out))
 	}
 	return nil
