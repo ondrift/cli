@@ -1140,26 +1140,40 @@ func (m *model) renderCanvas(b *strings.Builder) {
 	b.WriteString("    \x1b[36mdrift canvas deploy ./site --route /\x1b[0m\r\n\r\n")
 }
 
-// renderMemoryCensus draws the slice's real memory picture from the census:
-// the cgroup OOM line (the figure that actually kills the slice — page cache
-// included) with headroom, then the attributed breakdown.
+// renderMemoryCensus draws the slice's real memory picture from the census,
+// measured against the slice's DECLARED function_memory — never the pod's
+// real cgroup ceiling. The platform pads that real ceiling with its own
+// invisible runtime-startup headroom (e.g. compiled functions get a fixed
+// allowance to boot) that the user never declared and was never meant to
+// see; a function's own working set is what's shown here.
 func (m *model) renderMemoryCensus(b *strings.Builder) {
 	rt := m.rt
-	fmt.Fprintf(b, "  \x1b[1mSlice memory\x1b[0m  %s\r\n", dim("census · cgroup = the OOM line"))
+	fmt.Fprintf(b, "  \x1b[1mSlice memory\x1b[0m  %s\r\n", dim("census · against your declared limit"))
+	var used int64
 	if rt.CgroupKnown && rt.CgroupMaxBytes > 0 {
-		pct := float64(rt.CgroupCurrentBytes) / float64(rt.CgroupMaxBytes) * 100
+		used = rt.CgroupCurrentBytes
+	} else {
+		used = rt.ResidentBytes
+	}
+	if rt.FunctionMemoryLimitBytes > 0 {
+		limit := rt.FunctionMemoryLimitBytes
+		pct := float64(used) / float64(limit) * 100
 		col := cGreen
 		if pct >= 90 {
 			col = cRed
 		} else if pct >= 80 {
 			col = cOrange
 		}
+		free := limit - used
+		if free < 0 {
+			free = 0
+		}
 		fmt.Fprintf(b, "  %s  %s / %s  %s\r\n",
-			meter(rt.CgroupCurrentBytes, rt.CgroupMaxBytes, col, 20),
-			mib(rt.CgroupCurrentBytes), mib(rt.CgroupMaxBytes),
-			dim(fmt.Sprintf("(%.0f%%, %s free)", pct, mib(rt.CgroupHeadroomBytes))))
+			meter(used, limit, col, 20),
+			mib(used), mib(limit),
+			dim(fmt.Sprintf("(%.0f%%, %s free)", pct, mib(free))))
 	} else {
-		fmt.Fprintf(b, "  %s resident  %s\r\n", mib(rt.ResidentBytes), dim("(no cgroup limit visible)"))
+		fmt.Fprintf(b, "  %s resident  %s\r\n", mib(used), dim("(no declared limit visible)"))
 	}
 	b.WriteString("\r\n")
 	row2 := func(label, val, note string) {
