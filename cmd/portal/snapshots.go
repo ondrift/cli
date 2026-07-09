@@ -124,12 +124,15 @@ func (m *model) sliceSummaryCards() []statCard {
 	rt := m.rt
 	used, limit := "—", "—"
 	usage := "—"
-	var usedBytes int64
-	if rt.CgroupKnown && rt.CgroupMaxBytes > 0 {
-		usedBytes = rt.CgroupCurrentBytes
-	} else {
-		usedBytes = rt.ResidentBytes
-	}
+	// "used" is footprintBytes: your code's actual non-reclaimable memory —
+	// NOT raw cgroup usage, which is dominated by page cache (your own
+	// NoSQL/blob/SQL data sitting in RAM for speed) on anything that's
+	// touched real data. Page cache costs nothing to hold, vanishes
+	// instantly under pressure, and isn't something your code controls or
+	// should be budgeted against — same category as the platform's own
+	// invisible runtime-startup headroom for compiled functions. Neither
+	// belongs in "how much of MY commitment am I using".
+	usedBytes := rt.footprintBytes()
 	used = mib(usedBytes)
 	// "limit" is the Driftfile-declared function_memory — what the user
 	// actually configured and is billed for — NOT the pod's real cgroup
@@ -147,7 +150,7 @@ func (m *model) sliceSummaryCards() []statCard {
 		{"limit", limit},
 		{"usage", usage},
 	}}
-	footprint := statCard{title: "footprint", rows: [][2]string{
+	footprint := statCard{title: "breakdown", rows: [][2]string{
 		{"anon", mib(rt.AnonymousBytes)},
 		{"file", mib(rt.FileBackedBytes)},
 		{"cache", mib(rt.CgroupFileBytes)},

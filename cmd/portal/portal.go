@@ -1146,15 +1146,18 @@ func (m *model) renderCanvas(b *strings.Builder) {
 // invisible runtime-startup headroom (e.g. compiled functions get a fixed
 // allowance to boot) that the user never declared and was never meant to
 // see; a function's own working set is what's shown here.
+//
+// "used" is footprintBytes — non-reclaimable memory only, same as the
+// summary card above. Raw cgroup usage includes page cache (the slice's own
+// NoSQL/blob/SQL data cached in RAM for speed), which costs nothing to hold
+// and disappears instantly under real pressure. Counting it here would make
+// a slice that's simply cached its own data look like it's over budget for
+// something it doesn't control — the same category of noise as the
+// invisible runtime headroom the limit itself already excludes.
 func (m *model) renderMemoryCensus(b *strings.Builder) {
 	rt := m.rt
 	fmt.Fprintf(b, "  \x1b[1mSlice memory\x1b[0m  %s\r\n", dim("census · against your declared limit"))
-	var used int64
-	if rt.CgroupKnown && rt.CgroupMaxBytes > 0 {
-		used = rt.CgroupCurrentBytes
-	} else {
-		used = rt.ResidentBytes
-	}
+	used := rt.footprintBytes()
 	if rt.FunctionMemoryLimitBytes > 0 {
 		limit := rt.FunctionMemoryLimitBytes
 		pct := float64(used) / float64(limit) * 100
@@ -1182,7 +1185,7 @@ func (m *model) renderMemoryCensus(b *strings.Builder) {
 	row2("working set", mib(rt.AnonymousBytes), "anonymous — unreclaimable")
 	row2("file-backed", mib(rt.FileBackedBytes), "mmap (LMDB, .so)")
 	if rt.CgroupKnown {
-		row2("page cache", mib(rt.CgroupFileBytes), "blobs/canvas/sqlite — cgroup-charged, invisible to /proc")
+		row2("page cache", mib(rt.CgroupFileBytes), "your data, cached — free to reclaim, not counted above")
 	}
 	row2("idle floor", mib(rt.AnonymousFloorBytes), "min anonymous since boot")
 	row2("peak RSS", mib(rt.PeakRSSBytes), "")

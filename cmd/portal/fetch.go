@@ -180,6 +180,28 @@ type rtStats struct {
 	MemoryPressure      int   `json:"memory_pressure"`
 }
 
+// footprintBytes is what "your usage" means everywhere the dashboard shows
+// it: the non-reclaimable memory a slice is actually holding onto — anon +
+// dirty + unevictable + kernel slab. Deliberately excludes CgroupFileBytes
+// (page cache: clean LMDB/SQLite/blob pages), which costs nothing to hold
+// and vanishes instantly under real pressure — counting it would make an
+// idle slice that simply cached its own data look like it's hoarding
+// memory it needs. Mirrors slice/src/memguard.rs's own pressure formula
+// exactly (cgroup_current - cgroup_file), so what the dashboard calls
+// "used" and what the platform's own guard calls "pressure" are always
+// telling the same story. Falls back to ResidentBytes when the cgroup
+// itself isn't readable (local/standalone runs).
+func (rt *rtStats) footprintBytes() int64 {
+	if !rt.CgroupKnown || rt.CgroupMaxBytes == 0 {
+		return rt.ResidentBytes
+	}
+	f := rt.CgroupCurrentBytes - rt.CgroupFileBytes
+	if f < 0 {
+		return 0
+	}
+	return f
+}
+
 func fetchRuntime() (*rtStats, error) {
 	resp, err := common.DoRequest(http.MethodGet, common.APIBaseURL+"/ops/slice/runtime", nil)
 	if err != nil {
