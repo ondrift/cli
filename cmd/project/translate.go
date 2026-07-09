@@ -369,6 +369,32 @@ func parseDurationDays(s string) (int, error) {
 	return 0, fmt.Errorf("%q must end in s, m, h, or d", s)
 }
 
+// parseTTLSeconds turns a `<int><s|m|h|d>` string into seconds. Used by
+// nosql collection ttl, which the slice enforces at second granularity (its
+// maintenance sweep runs roughly every 30s) rather than the hour/day
+// granularity log/backup retention use. (Distinct from parseDurationSeconds
+// above, which is function-timeout-specific and deliberately rejects `d`.)
+func parseTTLSeconds(s string) (int64, error) {
+	for _, suf := range []struct {
+		ext  string
+		secs int64
+	}{
+		{"s", 1},
+		{"m", 60},
+		{"h", 60 * 60},
+		{"d", 60 * 60 * 24},
+	} {
+		if strings.HasSuffix(s, suf.ext) {
+			n, err := strconv.ParseInt(strings.TrimSuffix(s, suf.ext), 10, 64)
+			if err != nil {
+				return 0, fmt.Errorf("%q is not an integer with s/m/h/d suffix", s)
+			}
+			return n * suf.secs, nil
+		}
+	}
+	return 0, fmt.Errorf("%q must end in s, m, h, or d", s)
+}
+
 // parseRatePerMinute turns "1000/min", "10/s", "60000/h" into requests
 // per minute. The platform stores rate limits in per-minute granularity
 // regardless of the Driftfile's expressed unit.

@@ -219,6 +219,11 @@ type SQLEntry struct {
 type NoSQLEntry struct {
 	Name string `yaml:"name"`
 	Seed string `yaml:"seed"` // path to JSONL
+	// TTL: how long a document lives after its LAST write before the
+	// platform deletes it — resets on every update. Duration string
+	// (durationRe: <int>[smhd]); empty = kept forever. Per-collection,
+	// not per-document.
+	TTL string `yaml:"ttl"`
 }
 
 // CacheEntry is the long-form expansion. Short-form `<key>: <path>`
@@ -904,6 +909,9 @@ func validate(m *Manifest) ParseErrors {
 	for _, c := range b.NoSQL {
 		if !nameRe.MatchString(c.Name) {
 			errs = append(errs, fmt.Sprintf("nosql collection name %q is invalid", c.Name))
+		}
+		if c.TTL != "" && !durationRe.MatchString(c.TTL) {
+			errs = append(errs, fmt.Sprintf("nosql %q ttl %q must be an integer ending in s, m, h, or d", c.Name, c.TTL))
 		}
 		if c.Seed != "" {
 			seedPath := resolveBaseDir(m, c.Seed)

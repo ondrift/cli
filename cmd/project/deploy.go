@@ -781,16 +781,27 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 
 	for _, c := range b.NoSQL {
 		label := fmt.Sprintf("NoSQL: %s", c.Name)
-		if err := nosqlInit(c.Name); err != nil {
+		var ttlSecs int64
+		if c.TTL != "" {
+			var err error
+			ttlSecs, err = parseTTLSeconds(c.TTL)
+			if err != nil {
+				return fmt.Errorf("nosql %q ttl: %w", c.Name, err)
+			}
+		}
+		if err := nosqlInit(c.Name, ttlSecs); err != nil {
 			return fmt.Errorf("nosql init %q failed: %w", c.Name, err)
 		}
 		seeded := 0
 		if c.Seed != "" {
-			n, err := nosqlSeedJSONL(c.Name, m.ResolvePath(c.Seed))
+			n, err := nosqlSeedJSONL(c.Name, m.ResolvePath(c.Seed), ttlSecs)
 			if err != nil {
 				return fmt.Errorf("nosql seed %q failed: %w", c.Name, err)
 			}
 			seeded = n
+		}
+		if c.TTL != "" {
+			label += fmt.Sprintf(" (ttl %s)", c.TTL)
 		}
 		line := fmt.Sprintf("    %s %s", common.Check(), label)
 		if seeded > 0 {
@@ -934,9 +945,18 @@ func cacheSet(key, value string, ttl int) error {
 // no visible artefact lands in the collection. Also cleans up legacy
 // sentinel rows left behind by older deploys, so templates can stop
 // filtering them out at read time.
-func nosqlInit(collection string) error {
+//
+// ttlSecs is the Driftfile-declared per-collection TTL, or 0 for none.
+// ensure is authoritative on TTL: passing 0 CLEARS a previously-set TTL,
+// matching how removing `ttl:` from the Driftfile and redeploying should
+// behave (the collection reverts to "kept forever", not "stuck at
+// whatever TTL was last set").
+func nosqlInit(collection string, ttlSecs int64) error {
 	target := fmt.Sprintf("%s/ops/backbone/nosql/ensure?collection=%s",
 		common.APIBaseURL, url.QueryEscape(collection))
+	if ttlSecs > 0 {
+		target += fmt.Sprintf("&ttl=%d", ttlSecs)
+	}
 	resp, err := common.DoJSONRequest(http.MethodPost, target, nil)
 	if err != nil {
 		return common.TransportError("initialise NoSQL collection", err)
@@ -994,7 +1014,7 @@ func purgeLegacySentinels(collection string) error {
 // path upserts by `_id`, so even within a single seed run repeated
 // `_id`s get the right end-state. Apps that want runtime-mutable data
 // should use a separate (non-seeded) collection.
-func nosqlSeedJSONL(collection, path string) (int, error) {
+func nosqlSeedJSONL(collection, path string, ttlSecs int64) (int, error) {
 	data, err := os.ReadFile(path) // #nosec G304 — manifest-declared path, validated at parse
 	if err != nil {
 		return 0, fmt.Errorf("read seed: %w", err)
@@ -1013,7 +1033,7 @@ func nosqlSeedJSONL(collection, path string) (int, error) {
 		return 0, fmt.Errorf("drop seeded collection: HTTP %d: %s", dResp.StatusCode, string(body))
 	}
 	dResp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
-	if err := nosqlInit(collection); err != nil {
+	if err := nosqlInit(collection, ttlSecs); err != nil {
 		return 0, err
 	}
 	count := 0
