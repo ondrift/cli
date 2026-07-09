@@ -627,20 +627,31 @@ func (m *model) mainLines() []string {
 
 // footerStatus renders the status / confirm / inline-input line (row h-1).
 func (m *model) footerStatus() string {
+	// The running CLI version sits at the very start of this line whenever
+	// it isn't busy with an actual input/confirm interaction — same slot the
+	// update nudge uses, so "what am I running" is always visible at a
+	// glance, right next to "is something newer out" when there is one.
+	ver := ""
+	if m.version != "" {
+		ver = dim(m.version) + "  "
+	}
 	switch {
 	case m.input != nil:
 		return " \x1b[33m" + m.input.label + cReset + " " + m.input.buf + rev(" ")
 	case m.conf != nil:
 		return " \x1b[33m⚠ " + m.conf.prompt + cReset + dim("  (y / n)")
 	case m.status != "":
-		return " " + cyan(m.status)
+		return " " + ver + cyan(m.status)
 	case m.latest != "":
 		// Unobtrusive "update available" nudge — only when idle (a transient
 		// status above takes precedence). Points at the new `drift upgrade`.
-		return " " + cOrange + "⬆ New version of the drift CLI available: " + m.latest + cReset +
+		return " " + ver + cOrange + "⬆ New version of the drift CLI available: " + m.latest + cReset +
 			dim("  — run `drift upgrade`")
 	}
-	return ""
+	if ver == "" {
+		return ""
+	}
+	return " " + ver
 }
 
 // ── Sidebar focus + slice loading ────────────────────────────────────────────
