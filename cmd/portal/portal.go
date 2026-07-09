@@ -38,7 +38,7 @@ const (
 )
 
 // GetCmd returns the `drift portal` command.
-func GetCmd() *cobra.Command {
+func GetCmd(version string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "portal",
 		Short:   "Interactive dashboard for your slices, functions & data (TUI)",
@@ -47,7 +47,7 @@ func GetCmd() *cobra.Command {
 		Hidden:  true, // primary entrypoint is bare `drift`; kept as an alias
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return Run()
+			return Run(version)
 		},
 	}
 }
@@ -71,8 +71,11 @@ type model struct {
 	user   string
 	active string
 	status string
-	conf   *confirmAction // pending destructive confirm (intercepts keys)
-	input  *inputPrompt   // pending inline text input (intercepts keys)
+
+	version string         // the running CLI version (for the update check)
+	latest  string         // a newer release tag when one is available; "" otherwise
+	conf    *confirmAction // pending destructive confirm (intercepts keys)
+	input   *inputPrompt   // pending inline text input (intercepts keys)
 
 	slices []sliceCmd.SliceEntry
 	fns    []fnRow
@@ -126,8 +129,9 @@ type model struct {
 }
 
 // Run launches the full-screen dashboard. It's the bare `drift` entrypoint
-// (and the hidden `drift portal` alias).
-func Run() error {
+// (and the hidden `drift portal` alias). version is the running CLI version,
+// used for the "update available" banner.
+func Run(version string) error {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
 		return fmt.Errorf("the drift dashboard needs an interactive terminal")
@@ -137,7 +141,7 @@ func Run() error {
 		return fmt.Errorf("not logged in — run `drift account login` first")
 	}
 
-	m := &model{user: user, active: common.GetActiveSlice(), cols: 80, rows: 24, fnExp: -1}
+	m := &model{user: user, active: common.GetActiveSlice(), version: version, cols: 80, rows: 24, fnExp: -1}
 	if w, h, err := term.GetSize(fd); err == nil && w > 0 && h > 0 {
 		m.cols, m.rows = w, h
 	}
@@ -217,6 +221,24 @@ func Run() error {
 		}
 		mu.Lock()
 		m.news = news
+		m.render()
+		mu.Unlock()
+	}()
+
+	// Check GitHub for a newer CLI release, off the startup path. If one exists,
+	// the status line shows an "update available" nudge. Silent on any failure
+	// (offline, rate-limited, no releases yet) — and only when we know our own
+	// version (a dev build with an empty version never nags).
+	go func() {
+		if m.version == "" {
+			return
+		}
+		rel, err := common.FetchLatestCLIRelease()
+		if err != nil || common.CompareVersions(m.version, rel.Tag) >= 0 {
+			return
+		}
+		mu.Lock()
+		m.latest = rel.Tag
 		m.render()
 		mu.Unlock()
 	}()

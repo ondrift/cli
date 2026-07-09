@@ -40,8 +40,9 @@ func getResizeCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "resize [name]",
-		Short: "Resize an existing slice — browser by default, or --from a Driftfile",
-		Example: `  drift slice resize my-slice
+		Short: "Resize a slice — defaults to the active slice; browser by default, or --from a Driftfile",
+		Example: `  drift slice resize
+  drift slice resize my-slice
   drift slice resize --from Driftfile
   drift slice resize --from Driftfile --allow-destructive`,
 		Args: cobra.MaximumNArgs(1),
@@ -52,11 +53,19 @@ func getResizeCmd() *cobra.Command {
 				}
 				return resizeFromDriftfile(fromPath, allowDestructive, autoYes, billingMonths)
 			}
-			if len(args) != 1 {
-				return fmt.Errorf("provide a slice name, or use --from <Driftfile>")
-			}
 
-			name := args[0]
+			// No name given → resize the currently active slice (the one
+			// `drift slice use` selected), matching every other slice subcommand.
+			var name string
+			if len(args) == 1 {
+				name = args[0]
+			} else {
+				active, err := common.RequireActiveSlice()
+				if err != nil {
+					return fmt.Errorf("%w, or pass a slice name / use --from <Driftfile>", err)
+				}
+				name = active
+			}
 			existing, err := fetchSliceConfig(name)
 			if err != nil {
 				return err

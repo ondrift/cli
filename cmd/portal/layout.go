@@ -634,6 +634,11 @@ func (m *model) footerStatus() string {
 		return " \x1b[33m⚠ " + m.conf.prompt + cReset + dim("  (y / n)")
 	case m.status != "":
 		return " " + cyan(m.status)
+	case m.latest != "":
+		// Unobtrusive "update available" nudge — only when idle (a transient
+		// status above takes precedence). Points at the new `drift upgrade`.
+		return " " + cOrange + "⬆ New version of the drift CLI available: " + m.latest + cReset +
+			dim("  — run `drift upgrade`")
 	}
 	return ""
 }

@@ -92,9 +92,9 @@ func (e *APIError) Error() string {
 
 	case e.Status == http.StatusPaymentRequired || e.Status == http.StatusTooManyRequests:
 		if e.Detail != "" {
-			return lead + ": " + e.Detail + ". Run 'drift plan' to see your usage, or upgrade with 'drift plan upgrade'."
+			return lead + ": " + e.Detail + ". Run 'drift slice resize' to add capacity."
 		}
-		return lead + ": you're at your plan limit. Run 'drift plan' to see your usage, or upgrade with 'drift plan upgrade'."
+		return lead + ": you're at your plan limit. Run 'drift slice resize' to add capacity."
 
 	case e.Status >= 400 && e.Status < 500:
 		// Generic 4xx — trust the server's detail if it sent one.

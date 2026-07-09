@@ -13,6 +13,7 @@ import (
 	portal "github.com/ondrift/cli/cmd/portal"
 	project "github.com/ondrift/cli/cmd/project"
 	slice "github.com/ondrift/cli/cmd/slice"
+	upgrade "github.com/ondrift/cli/cmd/upgrade"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -37,7 +38,7 @@ func main() {
 			if !term.IsTerminal(int(os.Stdin.Fd())) {
 				return cmd.Help()
 			}
-			return portal.Run()
+			return portal.Run(version)
 		},
 	}
 
@@ -63,9 +64,6 @@ func main() {
 		// Migrate (read-only lift-off from another cloud, e.g. Azure)
 		migrate.GetCmd(),
 
-		// Deployment planning
-		account.GetPlanCmd(),
-
 		// Atomic functions
 		atomic.GetCmd(),
 
@@ -81,8 +79,11 @@ func main() {
 		// Account (signup, login, usage, upgrade)
 		account.GetAccountCmd(),
 
+		// Self-update: reinstall the CLI at latest (or a pinned version)
+		upgrade.GetCmd(),
+
 		// Portal — interactive TUI dashboard over your slices/functions/data
-		portal.GetCmd(),
+		portal.GetCmd(version),
 	)
 
 	if err := rootCmd.Execute(); err != nil {

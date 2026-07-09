@@ -124,11 +124,23 @@ func (m *model) sliceSummaryCards() []statCard {
 	rt := m.rt
 	used, limit := "—", "—"
 	usage := "—"
+	var usedBytes int64
 	if rt.CgroupKnown && rt.CgroupMaxBytes > 0 {
-		used, limit = mib(rt.CgroupCurrentBytes), mib(rt.CgroupMaxBytes)
-		usage = fmt.Sprintf("%.0f%%", float64(rt.CgroupCurrentBytes)/float64(rt.CgroupMaxBytes)*100)
+		usedBytes = rt.CgroupCurrentBytes
 	} else {
-		used = mib(rt.ResidentBytes)
+		usedBytes = rt.ResidentBytes
+	}
+	used = mib(usedBytes)
+	// "limit" is the Driftfile-declared function_memory — what the user
+	// actually configured and is billed for — NOT the pod's real cgroup
+	// ceiling. The platform pads the real ceiling with its own runtime
+	// headroom (e.g. compiled functions get an invisible allowance to boot),
+	// which the user never declared and was never meant to see; showing that
+	// raw number here would just be confusing ("I said 64MB, why does it say
+	// 960?"). Usage is measured against the same declared limit.
+	if rt.FunctionMemoryLimitBytes > 0 {
+		limit = mib(rt.FunctionMemoryLimitBytes)
+		usage = fmt.Sprintf("%.0f%%", float64(usedBytes)/float64(rt.FunctionMemoryLimitBytes)*100)
 	}
 	memory := statCard{title: "memory", rows: [][2]string{
 		{"used", used},
