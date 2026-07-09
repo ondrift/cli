@@ -1,7 +1,7 @@
 package main
 
 import (
-	drift "github.com/ondrift/sdk/go"
+	drift "github.com/ondrift/sdk/v2/go"
 )
 
 // {{FUNC}}Body is the JSON shape of this handler's request body. The generated
