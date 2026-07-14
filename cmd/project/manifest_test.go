@@ -187,6 +187,50 @@ canvas: ./canvas
 	}
 }
 
+// TestParseDriftfile_UnknownTopLevelField catches a typo'd top-level key
+// (e.g. "nmae" instead of "name") that the lenient first decode pass used
+// to silently drop, leaving the slice unnamed with no error at all. The
+// strict KnownFields(true) re-decode in ParseDriftfile must now reject it.
+func TestParseDriftfile_UnknownTopLevelField(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+nmae: hello
+canvas: ./canvas
+`)
+	mustMkdir(t, filepath.Join(tmp, "canvas"))
+
+	_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err == nil {
+		t.Fatal("expected error for unknown field \"nmae\", got nil")
+	}
+	if !contains(err.Error(), "nmae") {
+		t.Errorf("error should name the unrecognized field, got: %s", err)
+	}
+}
+
+// TestParseDriftfile_UnknownNestedField catches a typo'd field nested
+// under atomic/backbone/canvas (e.g. "schedule" misspelled), which is the
+// more common real-world case than a top-level typo.
+func TestParseDriftfile_UnknownNestedField(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+name: hello
+backbone:
+  nosql: [widgets]
+  qeues: [jobs]
+canvas: ./canvas
+`)
+	mustMkdir(t, filepath.Join(tmp, "canvas"))
+
+	_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err == nil {
+		t.Fatal("expected error for unknown field \"qeues\", got nil")
+	}
+	if !contains(err.Error(), "qeues") {
+		t.Errorf("error should name the unrecognized field, got: %s", err)
+	}
+}
+
 // writeRestaurantFixture writes a minimal-but-complete restaurant
 // project shape into a temp dir and returns the dir path. The
 // Driftfile content matches the canonical template under

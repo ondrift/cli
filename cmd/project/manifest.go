@@ -33,6 +33,7 @@ package project
 //     to the slice envelope's defaults.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -298,6 +299,24 @@ func ParseDriftfile(path string) (*Manifest, error) {
 
 	var m Manifest
 	if err := raw.Decode(&m); err != nil {
+		return nil, fmt.Errorf("Driftfile: %w", err)
+	}
+
+	// raw.Decode above is lenient about unrecognized keys — a typo'd field
+	// name (e.g. "mane:" instead of "name:") is silently dropped, not
+	// rejected, because yaml.Node.Decode has no strict/KnownFields option
+	// (only the streaming Decoder type does). Re-decode the same
+	// (already shorthand-expanded) content through that streaming decoder,
+	// purely to catch this — its result is discarded; `m` above remains
+	// the one true parse.
+	normalized, err := yaml.Marshal(&raw)
+	if err != nil {
+		return nil, fmt.Errorf("Driftfile: %w", err)
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(normalized))
+	dec.KnownFields(true)
+	var strict Manifest
+	if err := dec.Decode(&strict); err != nil {
 		return nil, fmt.Errorf("Driftfile: %w", err)
 	}
 
@@ -857,9 +876,9 @@ func validate(m *Manifest) ParseErrors {
 	}
 
 	// atomic functions
-	for _, fn := range a.Functions {
+	for i, fn := range a.Functions {
 		if !nameRe.MatchString(fn.Name) {
-			errs = append(errs, fmt.Sprintf("atomic function name %q is invalid", fn.Name))
+			errs = append(errs, fmt.Sprintf("atomic.functions[%d]: name %q is invalid", i, fn.Name))
 			continue
 		}
 		dir := fn.Dir
@@ -868,10 +887,10 @@ func validate(m *Manifest) ParseErrors {
 		}
 		dir = resolveBaseDir(m, dir)
 		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			errs = append(errs, fmt.Sprintf("atomic function %q not found at %s", fn.Name, dir))
+			errs = append(errs, fmt.Sprintf("atomic.functions[%d]: function %q not found at %s", i, fn.Name, dir))
 		}
 		if v := fn.Cron; v != "" && !cronFiveFieldRe.MatchString(v) {
-			errs = append(errs, fmt.Sprintf("atomic function %q: cron %q is not a valid 5-field cron expression", fn.Name, v))
+			errs = append(errs, fmt.Sprintf("atomic.functions[%d]: function %q cron %q is not a valid 5-field cron expression", i, fn.Name, v))
 		}
 	}
 
@@ -906,17 +925,17 @@ func validate(m *Manifest) ParseErrors {
 	}
 
 	// nosql collections
-	for _, c := range b.NoSQL {
+	for i, c := range b.NoSQL {
 		if !nameRe.MatchString(c.Name) {
-			errs = append(errs, fmt.Sprintf("nosql collection name %q is invalid", c.Name))
+			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: collection name %q is invalid", i, c.Name))
 		}
 		if c.TTL != "" && !durationRe.MatchString(c.TTL) {
-			errs = append(errs, fmt.Sprintf("nosql %q ttl %q must be an integer ending in s, m, h, or d", c.Name, c.TTL))
+			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q ttl %q must be an integer ending in s, m, h, or d", i, c.Name, c.TTL))
 		}
 		if c.Seed != "" {
 			seedPath := resolveBaseDir(m, c.Seed)
 			if _, err := os.Stat(seedPath); err != nil {
-				errs = append(errs, fmt.Sprintf("nosql %q seed file not found at %s", c.Name, seedPath))
+				errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q seed file not found at %s", i, c.Name, seedPath))
 				continue
 			}
 			if seedErrs := validateJSONLSeed(c.Name, seedPath); len(seedErrs) > 0 {
@@ -926,9 +945,9 @@ func validate(m *Manifest) ParseErrors {
 	}
 
 	// queues
-	for _, q := range b.Queues {
+	for i, q := range b.Queues {
 		if !nameRe.MatchString(q) {
-			errs = append(errs, fmt.Sprintf("queue name %q is invalid", q))
+			errs = append(errs, fmt.Sprintf("backbone.queues[%d]: name %q is invalid", i, q))
 		}
 	}
 
@@ -950,10 +969,10 @@ func validate(m *Manifest) ParseErrors {
 	if v := m.Slice.Canvas.CanvasSize; v != "" && !sizeRe.MatchString(v) {
 		errs = append(errs, fmt.Sprintf("canvas.canvas_size %q must be an integer ending in KB, MB, or GB", v))
 	}
-	for _, s := range m.Slice.Canvas.Sites {
+	for i, s := range m.Slice.Canvas.Sites {
 		dir := resolveBaseDir(m, s.Dir)
 		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			errs = append(errs, fmt.Sprintf("canvas directory not found at %s", dir))
+			errs = append(errs, fmt.Sprintf("canvas.sites[%d]: directory not found at %s", i, dir))
 		}
 	}
 
