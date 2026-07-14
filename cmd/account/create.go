@@ -6,7 +6,7 @@
 //     keeps signup symmetric with login (which has always sent
 //     plaintext) and lets the server enforce its own password
 //     rules on the actual plaintext rather than on a hash.
-//  2. Verify — user enters the 6-digit OTP from email, CLI POSTs
+//  2. Verify — user enters the 8-digit OTP from email, CLI POSTs
 //     /signup/verify, server materialises the account and
 //     returns the JWT pair.
 //
@@ -113,19 +113,27 @@ func GetCreateCmd() *cobra.Command {
 			}
 
 			// Step 2: prompt for OTP and verify.
-			// In dev mode (DRIFT_ENV=local on the server) the code is always
-			// "000000" and the CLI skips the prompt entirely.
+			// The code is always "000000" and the CLI skips the prompt
+			// entirely either in local dev (DRIFT_ENV=local on the server)
+			// or during a closed, invite-only alpha (the invite code already
+			// gates access, so a second OTP round-trip is redundant) — the
+			// server tells us which so the message shown is accurate.
 			var initiateResp struct {
-				DevMode bool `json:"dev_mode"`
+				OTPBypassed bool `json:"otp_bypassed"`
+				InviteOnly  bool `json:"invite_only"`
 			}
 			_ = json.Unmarshal(body, &initiateResp)
 
 			var code string
-			if initiateResp.DevMode {
+			if initiateResp.OTPBypassed {
 				code = "000000"
-				fmt.Println("Dev mode — skipping email verification.")
+				if initiateResp.InviteOnly {
+					fmt.Println("Invite-only alpha — skipping email verification (your invite code is the gate).")
+				} else {
+					fmt.Println("Dev mode — skipping email verification.")
+				}
 			} else {
-				fmt.Println("Check your email for a 6-digit verification code.")
+				fmt.Println("Check your email for an 8-digit verification code.")
 				code = common.PromptForInput("Verification code")
 			}
 
