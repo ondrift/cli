@@ -171,7 +171,7 @@ func nosqlReadCmd() *cobra.Command {
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if key == "" {
-				e := fmt.Errorf("Couldn't read document: --key is required.")
+				e := fmt.Errorf("Couldn't read document: --key is required.\nHint: to browse every document in a collection instead, use 'drift backbone nosql list --collection <name>'.")
 				fmt.Println(e)
 				return e
 			}
@@ -201,6 +201,8 @@ func nosqlReadCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&collection, "collection", "", "Collection name (default: \"default\")")
 	cmd.Flags().StringVar(&key, "key", "", "Document key to retrieve")
-	_ = cmd.MarkFlagRequired("key")
+	// Deliberately not cmd.MarkFlagRequired("key") — that fires cobra's own
+	// generic "required flag(s) not set" error before RunE ever runs, which
+	// pre-empts the more specific, hint-carrying message below.
 	return cmd
 }
