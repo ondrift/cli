@@ -47,13 +47,14 @@ func (v Verdict) String() string {
 
 // FieldDelta records one resource/envelope dimension that changed.
 type FieldDelta struct {
-	Path    string // human-readable path, e.g. "atomic.functions" or "backbone.nosql_storage"
-	Live    int    // current value on the live slice (0 if Create)
-	Wanted  int    // value the manifest declares
-	IsBytes bool   // render as a size string instead of a bare integer
-	IsTime  bool   // render as a duration (seconds) — applies to function_timeout
-	IsHours bool   // render as a duration (hours) — applies to log_retention
-	IsDays  bool   // render as a duration (days) — applies to backup_retention
+	Path      string // human-readable path, e.g. "atomic.functions" or "backbone.nosql_storage"
+	Live      int    // current value on the live slice (0 if Create)
+	Wanted    int    // value the manifest declares
+	IsBytes   bool   // render as a size string instead of a bare integer
+	IsTime    bool   // render as a duration (seconds) — applies to function_timeout
+	IsHours   bool   // render as a duration (hours) — applies to log_retention
+	IsDays    bool   // render as a duration (days) — applies to backup_retention
+	Omittable bool   // Wanted==0 means "the Driftfile didn't declare this knob", not "shrink it to zero"
 }
 
 // Delta returns Wanted - Live; positive means grow, negative means shrink.
@@ -120,24 +121,36 @@ func Diff(sliceName string, manifest SliceConfig, liveCfg *SliceConfig, liveCost
 // non-zero / non-equal ones. When includeZeroLive is true (Create
 // path), every field with a positive Wanted produces a delta
 // regardless of Live; otherwise only fields where Live != Wanted
-// produce a delta.
+// produce a delta — EXCEPT Omittable fields, where Wanted==0 means
+// "the Driftfile didn't mention this knob" (translate.go's own
+// documented convention), not "shrink it to zero". An omitted knob
+// must never diff against whatever the live slice already has,
+// or a Driftfile that simply doesn't repeat every envelope value
+// looks like a shrink of a slice that never actually changed.
 func compareFields(live, wanted SliceConfig, includeZeroLive bool) []FieldDelta {
 	pairs := []FieldDelta{
+		// Real derived counts — 0 is a meaningful, deliberate value
+		// (e.g. "this project genuinely declares zero secrets"), so these
+		// are never Omittable.
 		{Path: "atomic.functions", Live: live.Atomic.MaxNumberOfFunctions, Wanted: wanted.Atomic.MaxNumberOfFunctions},
 		{Path: "atomic.scheduled_jobs", Live: live.Atomic.MaxNumberOfScheduledJobs, Wanted: wanted.Atomic.MaxNumberOfScheduledJobs},
-		{Path: "atomic.function_memory", Live: live.Atomic.MaxFunctionMemoryBytes, Wanted: wanted.Atomic.MaxFunctionMemoryBytes, IsBytes: true},
-		{Path: "atomic.function_timeout", Live: live.Atomic.MaxFunctionRuntimeInSeconds, Wanted: wanted.Atomic.MaxFunctionRuntimeInSeconds, IsTime: true},
-		{Path: "atomic.rate_limit_per_minute", Live: live.Atomic.MaxNumberOfRequestsPerMinute, Wanted: wanted.Atomic.MaxNumberOfRequestsPerMinute},
-		{Path: "atomic.log_retention", Live: live.Atomic.MaxNumberOfHoursForLogRetention, Wanted: wanted.Atomic.MaxNumberOfHoursForLogRetention, IsHours: true},
 		{Path: "backbone.nosql_collections", Live: live.Backbone.NoSQL.MaxCollections, Wanted: wanted.Backbone.NoSQL.MaxCollections},
-		{Path: "backbone.nosql_storage", Live: live.Backbone.NoSQL.MaxStorageBytes, Wanted: wanted.Backbone.NoSQL.MaxStorageBytes, IsBytes: true},
 		{Path: "backbone.queues", Live: live.Backbone.Queues.MaxQueues, Wanted: wanted.Backbone.Queues.MaxQueues},
-		{Path: "backbone.queue_max_depth", Live: live.Backbone.Queues.MaxDepthEach, Wanted: wanted.Backbone.Queues.MaxDepthEach},
 		{Path: "backbone.secrets", Live: live.Backbone.Secrets.MaxCount, Wanted: wanted.Backbone.Secrets.MaxCount},
-		{Path: "backbone.blob_max_size", Live: live.Backbone.Blobs.MaxSizeInBytesEach, Wanted: wanted.Backbone.Blobs.MaxSizeInBytesEach, IsBytes: true},
-		{Path: "backbone.blob_max_count", Live: live.Backbone.Blobs.MaxCount, Wanted: wanted.Backbone.Blobs.MaxCount},
-		{Path: "backbone.backup_retention", Live: live.Backbone.BackupRetentionDays, Wanted: wanted.Backbone.BackupRetentionDays, IsDays: true},
-		{Path: "canvas.max_size", Live: live.Canvas.TotalMaxSizeInBytes, Wanted: wanted.Canvas.TotalMaxSizeInBytes, IsBytes: true},
+
+		// Envelope knobs — translate.go leaves these at 0 whenever the
+		// Driftfile omits them, specifically so downstream code treats
+		// zero as "inherit the platform default", not a declared value.
+		{Path: "atomic.function_memory", Live: live.Atomic.MaxFunctionMemoryBytes, Wanted: wanted.Atomic.MaxFunctionMemoryBytes, IsBytes: true, Omittable: true},
+		{Path: "atomic.function_timeout", Live: live.Atomic.MaxFunctionRuntimeInSeconds, Wanted: wanted.Atomic.MaxFunctionRuntimeInSeconds, IsTime: true, Omittable: true},
+		{Path: "atomic.rate_limit_per_minute", Live: live.Atomic.MaxNumberOfRequestsPerMinute, Wanted: wanted.Atomic.MaxNumberOfRequestsPerMinute, Omittable: true},
+		{Path: "atomic.log_retention", Live: live.Atomic.MaxNumberOfHoursForLogRetention, Wanted: wanted.Atomic.MaxNumberOfHoursForLogRetention, IsHours: true, Omittable: true},
+		{Path: "backbone.nosql_storage", Live: live.Backbone.NoSQL.MaxStorageBytes, Wanted: wanted.Backbone.NoSQL.MaxStorageBytes, IsBytes: true, Omittable: true},
+		{Path: "backbone.queue_max_depth", Live: live.Backbone.Queues.MaxDepthEach, Wanted: wanted.Backbone.Queues.MaxDepthEach, Omittable: true},
+		{Path: "backbone.blob_max_size", Live: live.Backbone.Blobs.MaxSizeInBytesEach, Wanted: wanted.Backbone.Blobs.MaxSizeInBytesEach, IsBytes: true, Omittable: true},
+		{Path: "backbone.blob_max_count", Live: live.Backbone.Blobs.MaxCount, Wanted: wanted.Backbone.Blobs.MaxCount, Omittable: true},
+		{Path: "backbone.backup_retention", Live: live.Backbone.BackupRetentionDays, Wanted: wanted.Backbone.BackupRetentionDays, IsDays: true, Omittable: true},
+		{Path: "canvas.max_size", Live: live.Canvas.TotalMaxSizeInBytes, Wanted: wanted.Canvas.TotalMaxSizeInBytes, IsBytes: true, Omittable: true},
 	}
 	out := []FieldDelta{}
 	for _, p := range pairs {
@@ -146,6 +159,9 @@ func compareFields(live, wanted SliceConfig, includeZeroLive bool) []FieldDelta 
 				out = append(out, p)
 			}
 			continue
+		}
+		if p.Omittable && p.Wanted == 0 {
+			continue // Driftfile didn't declare this knob — not a shrink
 		}
 		if p.Live != p.Wanted {
 			out = append(out, p)
