@@ -110,7 +110,7 @@ func resizeFromDriftfile(path string, allowDestructive, autoYes bool, billingMon
 	if err != nil {
 		return err
 	}
-	wantedCost, err := project.PriceConfig(manifestCfg)
+	wantedCost, wantedItems, err := project.PriceConfig(manifestCfg)
 	if err != nil {
 		return fmt.Errorf("price target config: %w", err)
 	}
@@ -124,6 +124,7 @@ func resizeFromDriftfile(path string, allowDestructive, autoYes bool, billingMon
 	}
 
 	d := project.Diff(m.Slice.Name, manifestCfg, &live.Config, live.MonthlyCostCents, wantedCost)
+	d.WantedItems = wantedItems
 
 	switch d.Verdict {
 	case project.VerdictMatch:

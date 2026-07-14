@@ -50,31 +50,44 @@ func FetchLiveSlice(name string) (*LiveSlice, error) {
 	return &s, nil
 }
 
-// PriceConfig POSTs /ops/slice/price with a SliceConfig and returns
-// the monthly cost in cents. Used by both --plan and the cost-confirm
-// prompt; the platform's pricing function is the single source of
-// truth, never the CLI.
-func PriceConfig(cfg SliceConfig) (int, error) {
+// LineItem mirrors the platform's core/common/plan.LineItem wire shape —
+// one priced (or informational, UnitCents==0) row in a price breakdown.
+type LineItem struct {
+	Key          string `json:"key"`
+	Label        string `json:"label"`
+	Quantity     int    `json:"quantity"`
+	UnitCents    int    `json:"unit_cents"`     // 0 means "included"
+	SubtotalCent int    `json:"subtotal_cents"` // authoritative
+}
+
+// PriceConfig POSTs /ops/slice/price with a SliceConfig and returns the
+// monthly cost in cents plus the itemised breakdown the server already
+// computes (core/common/plan.PriceConfig) — the same data the browser
+// configurator shows, just never threaded through the CLI's HTTP client
+// until now. Used by both --plan and the cost-confirm prompt; the
+// platform's pricing function is the single source of truth, never the CLI.
+func PriceConfig(cfg SliceConfig) (int, []LineItem, error) {
 	body := mustJSON(map[string]any{
 		"config":                cfg,
 		"billing_period_months": 1,
 	})
 	resp, err := common.DoJSONRequest(http.MethodPost, common.APIBaseURL+"/ops/slice/price", bytes.NewReader(body))
 	if err != nil {
-		return 0, common.TransportError("price config", err)
+		return 0, nil, common.TransportError("price config", err)
 	}
 	defer resp.Body.Close()
 	respBody, err := common.CheckResponse(resp, "price config")
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	var pr struct {
-		MonthlyCents int `json:"monthly_cents"`
+		MonthlyCents int        `json:"monthly_cents"`
+		Items        []LineItem `json:"items"`
 	}
 	if err := json.Unmarshal(respBody, &pr); err != nil {
-		return 0, fmt.Errorf("decode price response: %w", err)
+		return 0, nil, fmt.Errorf("decode price response: %w", err)
 	}
-	return pr.MonthlyCents, nil
+	return pr.MonthlyCents, pr.Items, nil
 }
 
 // ResizeSlice POSTs /ops/slice/resize with the new SliceConfig.

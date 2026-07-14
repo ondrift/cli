@@ -70,11 +70,16 @@ type DiffResult struct {
 	Shrinks         []FieldDelta // fields the manifest wants smaller than live (only set on Abort)
 	LiveCostCents   int          // monthly cost of the live slice (0 if Create)
 	WantedCostCents int          // monthly cost of the manifest's declared shape
+	WantedItems     []LineItem   // itemised breakdown backing WantedCostCents (server-computed)
 }
 
 // Diff compares the manifest-derived SliceConfig against the live
 // SliceConfig and returns the verdict + per-field deltas. liveCfg
 // must be a pointer; nil means "the slice doesn't exist yet" → Create.
+// Callers that have the server's itemised price breakdown (PriceConfig's
+// second return value) should set the result's WantedItems field
+// themselves afterward — Diff doesn't take it directly so existing callers
+// (and tests) that don't care about display don't need to change.
 func Diff(sliceName string, manifest SliceConfig, liveCfg *SliceConfig, liveCostCents, wantedCostCents int) DiffResult {
 	if liveCfg == nil {
 		// Create — every non-zero field in manifest is a grow.
@@ -182,7 +187,9 @@ func RenderDiff(d DiffResult) string {
 		for _, g := range d.Grows {
 			fmt.Fprintf(&sb, "    %s: %s\n", g.Path, formatValue(g, g.Wanted))
 		}
-		sb.WriteString("\n  ")
+		sb.WriteString("\n")
+		sb.WriteString(renderLineItems(d.WantedItems))
+		sb.WriteString("  ")
 		sb.WriteString(formatCostLine(d.WantedCostCents, true))
 		sb.WriteString("\n")
 
@@ -198,7 +205,9 @@ func RenderDiff(d DiffResult) string {
 				formatValue(g, g.Wanted),
 				formatPositive(g.Delta()))
 		}
-		sb.WriteString("\n  ")
+		sb.WriteString("\n")
+		sb.WriteString(renderLineItems(d.WantedItems))
+		sb.WriteString("  ")
 		sb.WriteString(formatCostChange(d.LiveCostCents, d.WantedCostCents))
 		sb.WriteString("\n")
 
@@ -219,6 +228,25 @@ func RenderDiff(d DiffResult) string {
 		sb.WriteString("    drift project deploy --no-slice-reconcile\n")
 	}
 
+	return sb.String()
+}
+
+// renderLineItems formats the server's itemised price breakdown, one line
+// per priced item: "label   quantity x €unit = €subtotal". Items with
+// UnitCents==0 are informational-only (things included at no charge, e.g.
+// NoSQL collections) — the pricing engine returns them so the browser
+// configurator can show "here's what you get", but a terminal cost-confirm
+// prompt shouldn't dump a run of €0.00 lines alongside the ones that
+// actually cost money, so they're filtered out here. Returns "" if there's
+// nothing to show (no items, or all of them free).
+func renderLineItems(items []LineItem) string {
+	var sb strings.Builder
+	for _, it := range items {
+		if it.UnitCents == 0 {
+			continue
+		}
+		fmt.Fprintf(&sb, "    %-24s %d x €%s = €%s\n", it.Label, it.Quantity, formatEuros(it.UnitCents), formatEuros(it.SubtotalCent))
+	}
 	return sb.String()
 }
 

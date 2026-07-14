@@ -84,3 +84,22 @@ func TestDiff_ExplicitLargerEnvelopeKnobIsStillAGrow(t *testing.T) {
 		t.Fatalf("verdict = %s, want grow", d.Verdict)
 	}
 }
+
+// TestRenderLineItems_FiltersZeroCostRows confirms informational-only line
+// items (UnitCents==0, e.g. "included" resources like NoSQL collections)
+// don't clutter the terminal cost-confirm prompt the way they do in the
+// browser configurator.
+func TestRenderLineItems_FiltersZeroCostRows(t *testing.T) {
+	items := []LineItem{
+		{Key: "base", Label: "Base", Quantity: 1, UnitCents: 100, SubtotalCent: 100},
+		{Key: "atomic_functions", Label: "Functions", Quantity: 3, UnitCents: 5, SubtotalCent: 15},
+		{Key: "bb_nosql", Label: "NoSQL collections", Quantity: 2, UnitCents: 0, SubtotalCent: 0},
+	}
+	out := renderLineItems(items)
+	if !contains(out, "Base") || !contains(out, "Functions") {
+		t.Fatalf("expected priced items in output, got: %q", out)
+	}
+	if contains(out, "NoSQL collections") {
+		t.Fatalf("expected zero-cost item to be filtered out, got: %q", out)
+	}
+}

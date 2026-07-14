@@ -324,7 +324,7 @@ func computeDiff(m *Manifest) (DiffResult, error) {
 	if err != nil {
 		return DiffResult{}, err
 	}
-	wantedCost, err := PriceConfig(manifestCfg)
+	wantedCost, wantedItems, err := PriceConfig(manifestCfg)
 	if err != nil {
 		return DiffResult{}, fmt.Errorf("price manifest config: %w", err)
 	}
@@ -343,7 +343,9 @@ func computeDiff(m *Manifest) (DiffResult, error) {
 		liveCost = live.MonthlyCostCents
 	}
 
-	return Diff(m.Slice.Name, manifestCfg, liveCfg, liveCost, wantedCost), nil
+	d := Diff(m.Slice.Name, manifestCfg, liveCfg, liveCost, wantedCost)
+	d.WantedItems = wantedItems
+	return d, nil
 }
 
 // confirm prompts the user with [y/N]. autoYes short-circuits the
