@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
 
 	"github.com/ondrift/cli/common"
 
@@ -13,17 +15,16 @@ import (
 
 // getCreateCmd builds `drift slice create [name]`.
 //
-// Default flow: opens the configurator in the browser. The user
-// types the slice name into the form, configures resources, reviews
-// the price, and submits — the configurator forwards the create call
-// to api on the user's behalf and the CLI polls for the result.
-// Passing a positional name pre-fills the form's name field.
+// Default flow: launches the drift dashboard (TUI) straight into
+// create-slice mode. The user configures resources there, reviews
+// the live price, and submits — the dashboard posts the create call
+// to api directly. Passing a positional name pre-fills the form's
+// name field. (This used to hand off to a browser-based configurator
+// service; that service has been retired in favor of the dashboard,
+// which already had a full equivalent create-slice form — see
+// cmd/portal/configform.go.)
 //
-// The configurator is the single source of truth for slice envelope
-// configuration. There is no terminal-based configurator; resource
-// configuration always happens in the browser.
-//
-// Headless flow (--free / --headless): skips the browser entirely
+// Headless flow (--free / --headless): skips the dashboard entirely
 // and creates a free Hacker slice directly. The name is required
 // in headless mode because there is no form to collect it from.
 // This path is the only one that works in CI, scripts, and SSH
@@ -34,9 +35,9 @@ func getCreateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create [name]",
-		Short: "Create a new slice (opens the configurator in your browser)",
-		Example: "  drift slice create my-slice            # browser configurator\n" +
-			"  drift slice create my-slice --free      # free Hacker slice, no browser\n" +
+		Short: "Create a new slice (opens the dashboard's create-slice view)",
+		Example: "  drift slice create my-slice            # opens the dashboard\n" +
+			"  drift slice create my-slice --free      # free Hacker slice, no dashboard\n" +
 			"  drift slice create my-slice --headless  # alias for --free (CI/scripts)",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -58,45 +59,41 @@ func getCreateCmd() *cobra.Command {
 				return createHeadless(name)
 			}
 
-			// Default: browser configurator.
-			result, err := runBrowserHandoff("create slice", name, modeCreate, nil)
-			if err != nil {
-				return err
-			}
-			activeName := sliceNameFromResult(result, name)
-			if activeName != "" {
-				if err := common.SaveActiveSlice(activeName); err != nil {
-					fmt.Println("Warning: couldn't mark the new slice as active —", err)
-				}
-			}
-			printSliceSummary("created and set as active", result)
-			return nil
+			// Default: launch the dashboard straight into create-slice mode.
+			// It sets the new slice active itself on a successful submit
+			// (see cmd/portal/configform.go's submitForm), so there's
+			// nothing left for this command to do afterward.
+			return openPortalCreate(name)
 		},
 	}
 
-	cmd.Flags().BoolVar(&free, "free", false, "Create a free Hacker slice without opening the configurator")
+	cmd.Flags().BoolVar(&free, "free", false, "Create a free Hacker slice without opening the dashboard")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Alias for --free (CI/scripts)")
 	_ = cmd.Flags().MarkHidden("headless")
 	return cmd
 }
 
-// sliceNameFromResult extracts the "name" field out of the Slice
-// document returned by the configurator. The fallback is the name
-// the user passed on the command line (if any), so the active-slice
-// marker is set even when the result body is missing or unparseable.
-func sliceNameFromResult(raw json.RawMessage, fallback string) string {
-	var s struct {
-		Name string `json:"name"`
+// openPortalCreate launches the drift dashboard (our own binary, so it's
+// always the build actually installed) straight into create-slice mode,
+// pre-filled with name. A re-exec rather than a direct call because
+// cmd/portal already imports cmd/slice (for SliceEntry/FetchSlices/
+// TierLabel) — importing cmd/portal back from here would be a cycle.
+// Mirrors the portal package's own re-exec pattern for suspend/resume
+// (see cmd/portal/newslice.go's driftExe + suspendAndRun).
+func openPortalCreate(name string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		exe = "drift"
 	}
-	if err := json.Unmarshal(raw, &s); err == nil && s.Name != "" {
-		return s.Name
-	}
-	return fallback
+	cmd := exec.Command(exe, "portal", "--create", name) // #nosec G204 -- our own binary, fixed args
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
 }
 
 // createHeadless posts directly to api/ops/slice/create with the free
 // tier. Kept for non-interactive use (CI, scripts, SSH sessions). For
-// configured (paid) slices, use the browser flow.
+// configured (paid) slices, use the dashboard flow (the default, no
+// --free/--headless).
 func createHeadless(name string) error {
 	body, _ := json.Marshal(map[string]string{
 		"name": name,

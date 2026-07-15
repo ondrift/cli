@@ -23,7 +23,7 @@ import (
 // version is set at build time via:
 //
 //	go build -ldflags "-X main.version=v1.0.0"
-var version = "v1.18.1"
+var version = "v1.19.0"
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -39,7 +39,7 @@ func main() {
 			if !term.IsTerminal(int(os.Stdin.Fd())) {
 				return cmd.Help()
 			}
-			return portal.Run(version)
+			return portal.Run(version, nil)
 		},
 	}
 

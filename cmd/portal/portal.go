@@ -39,7 +39,7 @@ const (
 
 // GetCmd returns the `drift portal` command.
 func GetCmd(version string) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "portal",
 		Short:   "Interactive dashboard for your slices, functions & data (TUI)",
 		Example: "  drift portal",
@@ -47,9 +47,20 @@ func GetCmd(version string) *cobra.Command {
 		Hidden:  true, // primary entrypoint is bare `drift`; kept as an alias
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return Run(version)
+			if cmd.Flags().Changed("create") {
+				name, _ := cmd.Flags().GetString("create")
+				return Run(version, &name)
+			}
+			return Run(version, nil)
 		},
 	}
+	// Internal-only: `drift slice create <name>`'s default path re-execs into
+	// this instead of importing cmd/portal directly (cmd/portal already
+	// imports cmd/slice for SliceEntry/FetchSlices/TierLabel, so the reverse
+	// import would be a cycle). Not meant to be typed by a user directly.
+	cmd.Flags().String("create", "", "internal: launch straight into create-slice mode, pre-filled with this name")
+	_ = cmd.Flags().MarkHidden("create")
+	return cmd
 }
 
 type confirmAction struct {
@@ -130,8 +141,14 @@ type model struct {
 
 // Run launches the full-screen dashboard. It's the bare `drift` entrypoint
 // (and the hidden `drift portal` alias). version is the running CLI version,
-// used for the "update available" banner.
-func Run(version string) error {
+// used for the "update available" banner. createName is non-nil when the
+// dashboard should open straight into create-slice mode instead of the
+// normal sidebar/tabs view — *createName pre-fills the form's name field
+// (possibly empty, letting the user type it in the form). This is how
+// `drift slice create <name>`'s default path lands the user directly in the
+// configurator-equivalent view, now that the old browser-based configurator
+// service is retired.
+func Run(version string, createName *string) error {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
 		return fmt.Errorf("the drift dashboard needs an interactive terminal")
@@ -147,6 +164,11 @@ func Run(version string) error {
 	}
 	m.loadSlices() // sidebar is always populated, independent of the active tab
 	m.load(m.tab)
+	if createName != nil {
+		m.form = newConfigForm()
+		m.form.name = *createName
+		m.recomputePrice()
+	}
 
 	old, err := term.MakeRaw(fd)
 	if err != nil {

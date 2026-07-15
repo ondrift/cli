@@ -1,19 +1,24 @@
-// Package lifecycle — browser handoff helpers shared by `drift slice create`
-// and `drift slice resize`.
+// Package lifecycle — browser handoff helpers for `drift slice resize`.
 //
-// The configurable-slices feature replaced the old "pick a tier" CLI prompt
-// with a browser form: the CLI mints a session against the configurator
-// service, opens the user's browser at a single-use URL, and then polls a
-// redeem endpoint until the session is finalized. The CLI never sees the
-// SliceConfig the user typed in — it only sees the final Slice document the
-// configurator forwarded to api/ops/slice/{create,resize}.
+// The configurable-slices feature originally replaced the old "pick a tier"
+// CLI prompt with a browser form for both create and resize: the CLI mints a
+// session against the configurator service, opens the user's browser at a
+// single-use URL, and then polls a redeem endpoint until the session is
+// finalized. The CLI never sees the SliceConfig the user typed in — it only
+// sees the final Slice document the configurator forwarded to
+// api/ops/slice/{create,resize}.
 //
-// Both commands also support a --headless mode that bypasses the browser
-// entirely. Headless mode posts directly to the api gateway and is the only
-// way to drive slice provisioning from a non-interactive shell (CI, tests,
-// scripts that pipe through ssh). It is intentionally less ergonomic than
-// the browser flow — the user has to know the exact tier name or pass the
-// full SliceConfig as a JSON file.
+// `drift slice create`'s default path no longer uses this — the configurator
+// service was retired in favor of the `drift` dashboard (cmd/portal), which
+// already has a full equivalent create-slice form; see cmd/slice/create.go's
+// openPortalCreate. Resize hasn't moved yet, so this file (and the
+// configurator handoff protocol it speaks) is still live for that one path.
+//
+// Resize also supports a --headless-equivalent: --from <Driftfile> (see
+// resize.go), which posts directly to the api gateway and is the only way to
+// drive a resize from a non-interactive shell (CI, tests, scripts that pipe
+// through ssh). It is intentionally less ergonomic than the browser flow —
+// the user has to hand-author the Driftfile's target shape.
 package slice
 
 import (
@@ -31,10 +36,11 @@ import (
 // on a server-side service module.
 type handoffMode string
 
-const (
-	modeCreate handoffMode = "create"
-	modeResize handoffMode = "resize"
-)
+// modeCreate ("create") no longer has a CLI call site — `drift slice create`'s
+// default path moved to the dashboard (cmd/portal) instead of a configurator
+// handoff, see cmd/slice/create.go's openPortalCreate. Only resize still hands
+// off to the configurator.
+const modeResize handoffMode = "resize"
 
 // handoffResponse is the configurator's reply to /ops/session/handoff.
 type handoffResponse struct {
