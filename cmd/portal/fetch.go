@@ -482,6 +482,12 @@ type sliceCfg struct {
 		Locks               struct{ MaxConcurrent int }                                 `json:"locks"`
 		BackupRetentionDays int                                                         `json:"backup_retention_days"`
 	} `json:"backbone"`
+	// Deed — the fourth pillar's quota surface, a peer of Backbone on
+	// SliceConfig (models.Deed), not nested under Backbone.
+	Deed struct {
+		Vault  struct{ MaxSizeInBytesEach, MaxEntriesPerUID int } `json:"vault"`
+		Pocket struct{ MaxSizeInBytesEach int }                   `json:"pocket"`
+	} `json:"deed"`
 }
 
 func fetchSliceDoc(name string) (*sliceDoc, error) {

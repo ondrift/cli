@@ -257,6 +257,8 @@ func (m *model) settingsLines() []string {
 		row("queues", fmt.Sprintf("%d · %d", c.Backbone.Queues.MaxQueues, c.Backbone.Queues.MaxDepthEach)),
 		row("blobs", pair(c.Backbone.Blobs.MaxCount, c.Backbone.Blobs.MaxSizeInBytesEach/mb, "MB")),
 		row("secrets", pair(c.Backbone.Secrets.MaxCount, c.Backbone.Secrets.MaxSizeInBytesEach/kb, "KB")),
+		row("vault", fmt.Sprintf("%d KB/item · %d entries/uid", c.Deed.Vault.MaxSizeInBytesEach/kb, c.Deed.Vault.MaxEntriesPerUID)),
+		row("pocket", fmt.Sprintf("%d KB/item", c.Deed.Pocket.MaxSizeInBytesEach/kb)),
 		row("realtime", fmt.Sprintf("%d", c.Backbone.Realtime.MaxConcurrentConnections)),
 		row("locks", fmt.Sprintf("%d", c.Backbone.Locks.MaxConcurrent)),
 		row("canvas", fmt.Sprintf("%d MB", c.Canvas.TotalMaxSizeInBytes/mb)),

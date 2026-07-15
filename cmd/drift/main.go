@@ -9,6 +9,7 @@ import (
 	atomic "github.com/ondrift/cli/cmd/atomic"
 	backbone "github.com/ondrift/cli/cmd/backbone"
 	canvas "github.com/ondrift/cli/cmd/canvas"
+	deed "github.com/ondrift/cli/cmd/deed"
 	migrate "github.com/ondrift/cli/cmd/migrate"
 	portal "github.com/ondrift/cli/cmd/portal"
 	project "github.com/ondrift/cli/cmd/project"
@@ -22,7 +23,7 @@ import (
 // version is set at build time via:
 //
 //	go build -ldflags "-X main.version=v1.0.0"
-var version = "v1.17.0"
+var version = "v1.18.0"
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -72,6 +73,9 @@ func main() {
 
 		// Backbone primitives (secrets, queues, blobs)
 		backbone.GetCmd(),
+
+		// Deed (identity: KeyAuth, JWT, Vault, Link, Pocket) — status only
+		deed.GetCmd(),
 
 		// Slice lifecycle (create, list, use, delete, upgrade)
 		slice.GetCmd(),
