@@ -321,6 +321,9 @@ func getSnapshotRestoreCmd() *cobra.Command {
 					Queues           int `json:"queues"`
 					Functions        int `json:"functions"`
 					Canvas           int `json:"canvas"`
+					VaultEntries     int `json:"vault_entries"`
+					LinkIdentities   int `json:"link_identities"`
+					PocketItems      int `json:"pocket_items"`
 				} `json:"restored"`
 				Errors []string `json:"errors"`
 			}
@@ -333,6 +336,9 @@ func getSnapshotRestoreCmd() *cobra.Command {
 			fmt.Printf("  NoSQL:       %d collections\n", r.NoSQLCollections)
 			fmt.Printf("  Blobs:       %d\n", r.Blobs)
 			fmt.Printf("  Queues:      %d\n", r.Queues)
+			fmt.Printf("  Vault:       %d entries\n", r.VaultEntries)
+			fmt.Printf("  Link:        %d identities\n", r.LinkIdentities)
+			fmt.Printf("  Pocket:      %d items\n", r.PocketItems)
 			fmt.Printf("  Functions:   %d\n", r.Functions)
 			fmt.Printf("  Canvas:      %d sites\n", r.Canvas)
 

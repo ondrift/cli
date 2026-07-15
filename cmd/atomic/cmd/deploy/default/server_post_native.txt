@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"os"
 
-	drift "github.com/ondrift/sdk/v2/go"
+	drift "github.com/ondrift/sdk/v3/go"
 )
 
 func main() {
