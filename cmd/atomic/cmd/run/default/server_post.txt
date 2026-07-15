@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"os"
 
-	drift "github.com/ondrift/sdk/v3/go"
+	drift "github.com/ondrift/sdk/v4/go"
 )
 
 // recoveryMiddleware turns a function panic into a 500 instead of a

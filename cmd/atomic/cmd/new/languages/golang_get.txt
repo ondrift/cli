@@ -1,7 +1,7 @@
 package main
 
 import (
-	drift "github.com/ondrift/sdk/v3/go"
+	drift "github.com/ondrift/sdk/v4/go"
 )
 
 // {{FUNC}} handles the request and returns (status, message, payload, headers).

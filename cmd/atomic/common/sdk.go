@@ -12,7 +12,7 @@
 // up automatically with no CLI change... EXCEPT across a Go major version.
 // Go's own semantic import versioning bakes the major into the module path
 // itself (v2+ is "github.com/ondrift/sdk/vN", not a bare version bump —
-// this repo is currently at /v3), so a future SDK major bump requires a
+// this repo is currently at /v4), so a future SDK major bump requires a
 // matching CLI change here AND in every generated-wrapper template that
 // hardcodes the same import path: cmd/atomic/cmd/deploy/default/
 // server_{post,get}_native.txt, cmd/atomic/cmd/new/languages/golang_{get,
@@ -21,4 +21,4 @@
 package atomic_common
 
 // DriftGoModule is the root module path of the published Drift SDK.
-const DriftGoModule = "github.com/ondrift/sdk/v3"
+const DriftGoModule = "github.com/ondrift/sdk/v4"

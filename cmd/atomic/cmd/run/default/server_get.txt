@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"os"
 
-	drift "github.com/ondrift/sdk/v3/go"
+	drift "github.com/ondrift/sdk/v4/go"
 )
 
 func recoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
