@@ -152,8 +152,9 @@ type Slice struct {
 // DomainEntry declares one custom hostname for the slice. Verify is
 // the ownership-proof method; "dns-txt" is the only mode for v1.
 type DomainEntry struct {
-	Host   string `yaml:"host"`
-	Verify string `yaml:"verify"` // "dns-txt" (default for v1)
+	Host     string `yaml:"host"`
+	Verify   string `yaml:"verify"`             // "dns-txt" (default for v1)
+	Wildcard bool   `yaml:"wildcard,omitempty"` // route every subdomain of Host to this slice
 }
 
 type AtomicSection struct {

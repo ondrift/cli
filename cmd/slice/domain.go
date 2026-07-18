@@ -21,6 +21,7 @@ type domainResponse struct {
 	Verify       string   `json:"verify,omitempty"`
 	Instructions []string `json:"instructions,omitempty"`
 	Detail       string   `json:"detail,omitempty"`
+	Wildcard     bool     `json:"wildcard,omitempty"`
 }
 
 func getDomainCmd() *cobra.Command {
@@ -28,6 +29,7 @@ func getDomainCmd() *cobra.Command {
 		Use:   "domain",
 		Short: "Add, verify, list, or remove custom hostnames for your slice",
 		Example: "  drift slice domain add forms.gemeente.example\n" +
+			"  drift slice domain add imprente.com --wildcard\n" +
 			"  drift slice domain verify forms.gemeente.example\n" +
 			"  drift slice domain list\n" +
 			"  drift slice domain remove forms.gemeente.example",
@@ -42,16 +44,25 @@ func getDomainCmd() *cobra.Command {
 }
 
 func getDomainAddCmd() *cobra.Command {
-	return &cobra.Command{
+	var wildcard bool
+	cmd := &cobra.Command{
 		Use:   "add <host>",
 		Short: "Register a custom hostname for the active slice",
-		Args:  cobra.ExactArgs(1),
+		Long: `Register a custom hostname for the active slice.
+
+--wildcard opts the domain into routing every one of its subdomains
+(isrand.imprente.com, alice.imprente.com, ...) to this SAME slice — your
+app is then responsible for its own per-subdomain multitenancy (reading
+its own Host header). This is a routing feature, not a wildcard TLS
+certificate: each subdomain still gets its own certificate, issued on
+first request, exactly like every other custom domain.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := common.RequireActiveSlice(); err != nil {
 				return err
 			}
 			host := strings.ToLower(strings.TrimSpace(args[0]))
-			body, _ := json.Marshal(map[string]string{"host": host, "verify": "dns-txt"})
+			body, _ := json.Marshal(map[string]any{"host": host, "verify": "dns-txt", "wildcard": wildcard})
 			resp, err := common.DoJSONRequest(http.MethodPost,
 				common.APIBaseURL+"/ops/slice/domain", strings.NewReader(string(body)))
 			if err != nil {
@@ -72,6 +83,8 @@ func getDomainAddCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&wildcard, "wildcard", false, "Route every subdomain of this domain to the same slice")
+	return cmd
 }
 
 func getDomainVerifyCmd() *cobra.Command {
@@ -140,13 +153,17 @@ func getDomainListCmd() *cobra.Command {
 				fmt.Println("No custom domains registered for this slice.")
 				return nil
 			}
-			fmt.Printf("%-40s  %-10s  %s\n", "HOST", "STATUS", "DETAIL")
+			fmt.Printf("%-40s  %-10s  %-9s  %s\n", "HOST", "STATUS", "WILDCARD", "DETAIL")
 			for _, d := range domains {
 				detail := d.StatusDetail
 				if d.TXTToken != "" && d.Status == "pending" {
 					detail = "TXT token: " + d.TXTToken
 				}
-				fmt.Printf("%-40s  %-10s  %s\n", d.Host, d.Status, detail)
+				wildcard := ""
+				if d.Wildcard {
+					wildcard = "yes"
+				}
+				fmt.Printf("%-40s  %-10s  %-9s  %s\n", d.Host, d.Status, wildcard, detail)
 			}
 			return nil
 		},
