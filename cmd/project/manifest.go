@@ -101,6 +101,10 @@ type Manifest struct {
 	// Hooks are local shell commands run around a deploy (see Hooks).
 	Hooks Hooks `yaml:"hooks,omitempty"`
 
+	// Tests are local shell commands `drift project test` runs against a
+	// `project run`-started local instance (see Tests).
+	Tests Tests `yaml:"tests,omitempty"`
+
 	// baseDir is set after parsing; relative paths in the manifest
 	// resolve against it.
 	baseDir string `yaml:"-"`
@@ -116,6 +120,18 @@ type Manifest struct {
 type Hooks struct {
 	PreDeploy  []string `yaml:"pre_deploy,omitempty"`
 	PostDeploy []string `yaml:"post_deploy,omitempty"`
+}
+
+// Tests are shell commands `drift project test` runs once the project is up
+// locally (the same instance `drift project run` starts) — e2e/integration
+// checks against a real running instance, before anything ships to Drift.
+// Commands run in declaration order via the shell, from the project root; a
+// non-zero exit fails the run. The instance's local URL rides in as
+// DRIFT_TEST_URL so a test command knows where to point (the port is picked
+// at runtime, never fixed). Deliberately NOT a pipeline engine — same posture
+// as Hooks: no stages, matrices, parallelism, or remote execution.
+type Tests struct {
+	E2E []string `yaml:"e2e,omitempty"`
 }
 
 type Slice struct {
@@ -354,6 +370,24 @@ func ParseHooks(path string) (Hooks, error) {
 		return Hooks{}, fmt.Errorf("Driftfile: invalid YAML: %w", err)
 	}
 	return wrapper.Hooks, nil
+}
+
+// ParseTests decodes ONLY the `tests:` block, with no validation and no
+// file-existence checks — same cheap-parse posture as ParseHooks, so `drift
+// project test` can check "are any tests even declared" before paying for a
+// full build.
+func ParseTests(path string) (Tests, error) {
+	data, err := os.ReadFile(path) // #nosec G304 — CLI reads the user's manifest by design
+	if err != nil {
+		return Tests{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	var wrapper struct {
+		Tests Tests `yaml:"tests"`
+	}
+	if err := yaml.Unmarshal(data, &wrapper); err != nil {
+		return Tests{}, fmt.Errorf("Driftfile: invalid YAML: %w", err)
+	}
+	return wrapper.Tests, nil
 }
 
 // ParseProjectName cheaply decodes ONLY the top-level `name` — no validation,
@@ -983,6 +1017,7 @@ func validate(m *Manifest) ParseErrors {
 
 	// hooks — local lifecycle commands
 	errs = append(errs, validateHooks(m.Hooks)...)
+	errs = append(errs, validateTests(m.Tests)...)
 
 	return errs
 }
@@ -1032,6 +1067,18 @@ func validateHooks(h Hooks) []string {
 	for i, c := range h.PostDeploy {
 		if strings.TrimSpace(c) == "" {
 			errs = append(errs, fmt.Sprintf("hooks.post_deploy[%d] is empty", i))
+		}
+	}
+	return errs
+}
+
+// validateTests rejects empty/whitespace-only test commands — same posture
+// as validateHooks.
+func validateTests(t Tests) []string {
+	var errs []string
+	for i, c := range t.E2E {
+		if strings.TrimSpace(c) == "" {
+			errs = append(errs, fmt.Sprintf("tests.e2e[%d] is empty", i))
 		}
 	}
 	return errs

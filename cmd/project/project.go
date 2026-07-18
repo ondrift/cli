@@ -22,6 +22,7 @@ func GetCmd() *cobra.Command {
 		getDeployCmd(),
 		getDiffCmd(),
 		getRunCmd(),
+		getTestCmd(),
 		getStopCmd(),
 		getLogsCmd(),
 	)

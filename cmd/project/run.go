@@ -56,126 +56,14 @@ DRIFT_RUN_HOST_BUILD=1 to use your host toolchains instead (faster, no pulls).`,
 		Example: "  drift project run\n  drift project run --port 9000\n  drift project run --persist",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := requireDocker(); err != nil {
-				return err
-			}
-			manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))
-			if err != nil {
-				return err
-			}
-			if _, err := os.Stat(manifestPath); err != nil {
-				return fmt.Errorf("no Driftfile in the current directory (looked for %s)", manifestPath)
-			}
-			projectDir := filepath.Dir(manifestPath)
-
 			selectedEnv := envName
 			if len(args) == 1 {
 				selectedEnv = args[0]
 			}
-
-			// Same variable origin hierarchy as deploy: ENV-bind + .env.<env> +
-			// .env, so ${VAR}/$ENVREF and hook shells resolve identically.
-			overrides := []string{}
-			if selectedEnv != "" {
-				overrides = append(overrides, "ENV="+selectedEnv)
-			}
-			vars, err := applyVariableSources(projectDir, overrides, !noEnvFile, selectedEnv)
+			app, container, url, err := startLocal(selectedEnv, len(args) == 1, hostPort, persist, noEnvFile)
 			if err != nil {
 				return err
 			}
-			vars.report()
-
-			// pre_deploy hooks first (e.g. a frontend build that produces the
-			// canvas dir the parse then validates).
-			hooks, err := ParseHooks(manifestPath)
-			if err != nil {
-				return err
-			}
-			if err := runHooks("pre_deploy", hooks.PreDeploy, projectDir); err != nil {
-				return err
-			}
-
-			m, err := ParseDriftfile(manifestPath)
-			if err != nil {
-				return err
-			}
-			if _, err := m.SelectEnvironment(selectedEnv, len(args) == 1); err != nil {
-				return err
-			}
-			app := m.Slice.Name
-			container := "drift-" + app
-
-			// ── Build into a temp slot layout ───────────────────────────────
-			work, err := os.MkdirTemp("", "drift-run-"+app+"-")
-			if err != nil {
-				return err
-			}
-			defer os.RemoveAll(work) // baked into the image below; nothing tethered
-			runnerDir := filepath.Join(work, "runner")
-			canvasDir := filepath.Join(work, "canvas")
-
-			fmt.Printf("\n  %s building %s…\n", common.Hint("·"), common.Highlight(app))
-			elements, err := atomic_cmd.DiscoverElements(m.ResolvePath("atomic"))
-			if err != nil {
-				return err
-			}
-			if len(elements) > 0 {
-				if err := checkRouteCollisions(m); err != nil {
-					return err
-				}
-				if err := atomic_cmd.StageElementsLocally(elements, runnerDir, true); err != nil {
-					return fmt.Errorf("build functions: %w", err)
-				}
-			} else {
-				_ = os.MkdirAll(runnerDir, 0o755)
-			}
-			if err := layoutCanvas(m, canvasDir); err != nil {
-				return fmt.Errorf("lay out canvas: %w", err)
-			}
-
-			// ── Bake the thin image (FROM ondrift/runner, COPY layout) ──────
-			fmt.Printf("  %s baking image…\n", common.Hint("·"))
-			image := "drift-run-" + app
-			if err := bakeImage(work, image); err != nil {
-				return err
-			}
-
-			// ── Launch detached ─────────────────────────────────────────────
-			_ = exec.Command("docker", "rm", "-f", container).Run() // re-run = replace
-			port := hostPort
-			if port == 0 {
-				port = pickPort(8002)
-			}
-			runArgs := []string{
-				"run", "-d", "--name", container,
-				"-p", fmt.Sprintf("127.0.0.1:%d:8002", port), // canvas only; :8000/:8001 stay internal
-				"-e", "DRIFT_STANDALONE_SAT=drift-run",
-			}
-			// Declared secrets ride in as DRIFT_SECRET_<NAME>; the slice seeds them
-			// into its AES-encrypted store at boot (standalone only) and the runner
-			// then injects each declared secret into its function. Values are already
-			// $ENVREF-resolved. Docker-native `-e SECRET=…` — no admin port exposed.
-			// (Visible to `docker inspect` on this host, the user's own machine; the
-			// SAT itself is never passed this way.)
-			for name, val := range m.Slice.Backbone.Secrets {
-				runArgs = append(runArgs, "-e", fmt.Sprintf("DRIFT_SECRET_%s=%s", name, val))
-			}
-			if persist {
-				runArgs = append(runArgs, "-v", container+"-data:/data")
-			}
-			runArgs = append(runArgs, image)
-			if out, err := exec.Command("docker", runArgs...).CombinedOutput(); err != nil {
-				return fmt.Errorf("docker run failed: %s", string(out))
-			}
-
-			// ── Health-poll so the closeout is true, not hopeful ────────────
-			url := fmt.Sprintf("http://127.0.0.1:%d/", port)
-			if !waitHealthy(url, 8*time.Second) {
-				logs, _ := exec.Command("docker", "logs", "--tail", "20", container).CombinedOutput()
-				return fmt.Errorf("%s started but isn't responding on %s — last log lines:\n%s",
-					app, url, string(logs))
-			}
-
 			fmt.Printf("\n  %s %s running (container %s)\n", common.Check(), common.Highlight(app), container)
 			fmt.Printf("     → %s\n", common.Highlight(url))
 			fmt.Printf("     %s\n\n", common.Hint("drift project logs · drift project stop"))
@@ -187,6 +75,129 @@ DRIFT_RUN_HOST_BUILD=1 to use your host toolchains instead (faster, no pulls).`,
 	cmd.Flags().BoolVar(&persist, "persist", false, "Keep Backbone data in a named volume across runs")
 	cmd.Flags().BoolVar(&noEnvFile, "no-env-file", false, "Do not read the .env / .env.<env> file")
 	return cmd
+}
+
+// startLocal is `drift project run`'s actual work, extracted so `drift
+// project test` can start the same local instance, run tests against it, and
+// tear it down — without duplicating the build → bake → launch → health-poll
+// sequence. Returns the app name, container name, and base URL of the now-
+// running (and confirmed healthy) instance.
+func startLocal(selectedEnv string, envExplicit bool, hostPort int, persist, noEnvFile bool) (app, container, url string, err error) {
+	if err := requireDocker(); err != nil {
+		return "", "", "", err
+	}
+	manifestPath, err := filepath.Abs(filepath.Join(".", driftfileName))
+	if err != nil {
+		return "", "", "", err
+	}
+	if _, err := os.Stat(manifestPath); err != nil {
+		return "", "", "", fmt.Errorf("no Driftfile in the current directory (looked for %s)", manifestPath)
+	}
+	projectDir := filepath.Dir(manifestPath)
+
+	// Same variable origin hierarchy as deploy: ENV-bind + .env.<env> +
+	// .env, so ${VAR}/$ENVREF and hook shells resolve identically.
+	overrides := []string{}
+	if selectedEnv != "" {
+		overrides = append(overrides, "ENV="+selectedEnv)
+	}
+	vars, err := applyVariableSources(projectDir, overrides, !noEnvFile, selectedEnv)
+	if err != nil {
+		return "", "", "", err
+	}
+	vars.report()
+
+	// pre_deploy hooks first (e.g. a frontend build that produces the
+	// canvas dir the parse then validates).
+	hooks, err := ParseHooks(manifestPath)
+	if err != nil {
+		return "", "", "", err
+	}
+	if err := runHooks("pre_deploy", hooks.PreDeploy, projectDir); err != nil {
+		return "", "", "", err
+	}
+
+	m, err := ParseDriftfile(manifestPath)
+	if err != nil {
+		return "", "", "", err
+	}
+	if _, err := m.SelectEnvironment(selectedEnv, envExplicit); err != nil {
+		return "", "", "", err
+	}
+	app = m.Slice.Name
+	container = "drift-" + app
+
+	// ── Build into a temp slot layout ───────────────────────────────
+	work, err := os.MkdirTemp("", "drift-run-"+app+"-")
+	if err != nil {
+		return "", "", "", err
+	}
+	defer os.RemoveAll(work) // baked into the image below; nothing tethered
+	runnerDir := filepath.Join(work, "runner")
+	canvasDir := filepath.Join(work, "canvas")
+
+	fmt.Printf("\n  %s building %s…\n", common.Hint("·"), common.Highlight(app))
+	elements, err := atomic_cmd.DiscoverElements(m.ResolvePath("atomic"))
+	if err != nil {
+		return "", "", "", err
+	}
+	if len(elements) > 0 {
+		if err := checkRouteCollisions(m); err != nil {
+			return "", "", "", err
+		}
+		if err := atomic_cmd.StageElementsLocally(elements, runnerDir, true); err != nil {
+			return "", "", "", fmt.Errorf("build functions: %w", err)
+		}
+	} else {
+		_ = os.MkdirAll(runnerDir, 0o755)
+	}
+	if err := layoutCanvas(m, canvasDir); err != nil {
+		return "", "", "", fmt.Errorf("lay out canvas: %w", err)
+	}
+
+	// ── Bake the thin image (FROM ondrift/runner, COPY layout) ──────
+	fmt.Printf("  %s baking image…\n", common.Hint("·"))
+	image := "drift-run-" + app
+	if err := bakeImage(work, image); err != nil {
+		return "", "", "", err
+	}
+
+	// ── Launch detached ─────────────────────────────────────────────
+	_ = exec.Command("docker", "rm", "-f", container).Run() // re-run = replace
+	port := hostPort
+	if port == 0 {
+		port = pickPort(8002)
+	}
+	runArgs := []string{
+		"run", "-d", "--name", container,
+		"-p", fmt.Sprintf("127.0.0.1:%d:8002", port), // canvas only; :8000/:8001 stay internal
+		"-e", "DRIFT_STANDALONE_SAT=drift-run",
+	}
+	// Declared secrets ride in as DRIFT_SECRET_<NAME>; the slice seeds them
+	// into its AES-encrypted store at boot (standalone only) and the runner
+	// then injects each declared secret into its function. Values are already
+	// $ENVREF-resolved. Docker-native `-e SECRET=…` — no admin port exposed.
+	// (Visible to `docker inspect` on this host, the user's own machine; the
+	// SAT itself is never passed this way.)
+	for name, val := range m.Slice.Backbone.Secrets {
+		runArgs = append(runArgs, "-e", fmt.Sprintf("DRIFT_SECRET_%s=%s", name, val))
+	}
+	if persist {
+		runArgs = append(runArgs, "-v", container+"-data:/data")
+	}
+	runArgs = append(runArgs, image)
+	if out, err := exec.Command("docker", runArgs...).CombinedOutput(); err != nil {
+		return "", "", "", fmt.Errorf("docker run failed: %s", string(out))
+	}
+
+	// ── Health-poll so the closeout is true, not hopeful ────────────
+	url = fmt.Sprintf("http://127.0.0.1:%d/", port)
+	if !waitHealthy(url, 8*time.Second) {
+		logs, _ := exec.Command("docker", "logs", "--tail", "20", container).CombinedOutput()
+		return "", "", "", fmt.Errorf("%s started but isn't responding on %s — last log lines:\n%s",
+			app, url, string(logs))
+	}
+	return app, container, url, nil
 }
 
 func getStopCmd() *cobra.Command {

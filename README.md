@@ -103,6 +103,7 @@ drift project deploy                   # …or deploy a whole app from a Driftfi
 |---------|-------------|
 | `drift project deploy [env]` | Deploy an entire application from its `Driftfile`. Functions whose source is unchanged since the last deploy are skipped automatically; pass `--force` to redeploy everything. |
 | `drift project run [env]` | Build and run the whole project locally in Docker — no account, no cloud. The "run it locally" half of the two-button story. |
+| `drift project test [env]` | Run the project locally (same as `project run`) and run its Driftfile-declared `tests.e2e` commands against it, always tearing the instance down afterward. |
 | `drift project stop [env]` | Stop the local run. |
 | `drift project logs [env]` | Tail logs from the local run. |
 | `drift project diff` | Preview what a deploy would change (never shrinks a slice). |
