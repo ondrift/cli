@@ -70,11 +70,11 @@ func TestBuildEstimate_Golden(t *testing.T) {
 	eq(t, "azure total", res.Azure.TotalCents, 26775)
 	eq(t, "azure movable", res.Azure.MovableCents, 20775)
 	eq(t, "azure other (unmapped, stays on Azure)", res.Azure.OtherCents, 6000)
-	// Drift estimate: base 100 + 2 movable functions × 5 = 110. The Cosmos
+	// Drift estimate: 2 movable functions × 5 = 10 (no flat base fee). The Cosmos
 	// container maps to a NoSQL collection, which is now FREE by count (storage
 	// GiB is sized at transform, not here) — so it no longer adds to the bill.
-	eq(t, "drift monthly", res.Drift.MonthlyCents, 110)
-	eq(t, "monthly saving", res.SavingCents, 20665) // azure movable 20775 − drift 110
+	eq(t, "drift monthly", res.Drift.MonthlyCents, 10)
+	eq(t, "monthly saving", res.SavingCents, 20765) // azure movable 20775 − drift 10
 
 	eq(t, "movable function apps", len(res.Movable), 2)
 	eq(t, "refused/unverified function apps", len(res.Refused), 1)

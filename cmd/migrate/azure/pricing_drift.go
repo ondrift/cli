@@ -9,15 +9,16 @@ package azure
 // Source of truth: docs/memos/done/pricing-v2-ram-storage-model.md (and the
 // constants in platform/core/common/plan/pricing.go). Integer cents, never
 // floats (same discipline as the platform). The model charges for the box:
-// RAM (function memory, realtime) + storage (per GiB) + a flat base + a tiny
-// function token; collections / queues / SQL dbs / blob count are FREE.
+// RAM (function memory, realtime) + storage (per GiB) + a tiny function
+// token; collections / queues / SQL dbs / blob count are FREE. No flat base
+// fee — removed platform-side (see pricing.go's own comment) since it was
+// the one line that didn't map to a configured resource.
 const (
-	driftCentsBase            = 100 // floor charge for any slice
-	driftCentsPerFunction     = 5   // per @atomic function (surface token)
-	driftCentsPerScheduledJob = 30  // per scheduled (cron) job (background load)
-	driftCentsPerMiBMemory    = 3   // per MiB of function-memory cap (RAM, primary lever)
-	driftCentsPerRealtimeConn = 1   // per concurrent realtime connection (RAM)
-	driftCentsPerGiBStorage   = 25  // per GiB of pooled storage (nosql+blob+sql+canvas)
+	driftCentsPerFunction     = 5  // per @atomic function (surface token)
+	driftCentsPerScheduledJob = 30 // per scheduled (cron) job (background load)
+	driftCentsPerMiBMemory    = 3  // per MiB of function-memory cap (RAM, primary lever)
+	driftCentsPerRealtimeConn = 1  // per concurrent realtime connection (RAM)
+	driftCentsPerGiBStorage   = 25 // per GiB of pooled storage (nosql+blob+sql+canvas)
 	bytesPerGiB               = 1024 * 1024 * 1024
 )
 
@@ -67,7 +68,6 @@ func priceDrift(r driftResources) driftBreakdown {
 	storageCents := int((storage*int64(driftCentsPerGiBStorage) + bytesPerGiB/2) / bytesPerGiB)
 
 	lines := []driftLine{
-		{"base", "Base slice", 1, driftCentsBase, driftCentsBase},
 		{"atomic_functions", "Atomic functions", funcs, driftCentsPerFunction, funcs * driftCentsPerFunction},
 		{"atomic_scheduled", "Scheduled jobs", sched, driftCentsPerScheduledJob, sched * driftCentsPerScheduledJob},
 		{"realtime_connections", "Realtime connections", conns, driftCentsPerRealtimeConn, conns * driftCentsPerRealtimeConn},

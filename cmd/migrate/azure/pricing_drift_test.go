@@ -11,7 +11,6 @@ func TestDriftConstantsPinned(t *testing.T) {
 		name      string
 		got, want int
 	}{
-		{"CentsBase", driftCentsBase, 100},
 		{"CentsPerFunction", driftCentsPerFunction, 5},
 		{"CentsPerScheduledJob", driftCentsPerScheduledJob, 30},
 		{"CentsPerMiBMemory", driftCentsPerMiBMemory, 3},
@@ -27,16 +26,16 @@ func TestDriftConstantsPinned(t *testing.T) {
 
 func TestPriceDrift(t *testing.T) {
 	const gib = 1024 * 1024 * 1024
-	// 2 functions: base 100 + 2*5 = 110.
-	if got := priceDrift(driftResources{Functions: 2}).MonthlyCents; got != 110 {
-		t.Errorf("priceDrift(2 fn) = %d, want 110", got)
+	// 2 functions: 2*5 = 10.
+	if got := priceDrift(driftResources{Functions: 2}).MonthlyCents; got != 10 {
+		t.Errorf("priceDrift(2 fn) = %d, want 10", got)
 	}
-	// 64 MiB memory + 1 GiB storage: base 100 + 64*3 + 25 = 317.
-	if got := priceDrift(driftResources{MemoryMiB: 64, StorageBytes: 1 * gib}).MonthlyCents; got != 317 {
-		t.Errorf("priceDrift(64 MiB, 1 GiB) = %d, want 317", got)
+	// 64 MiB memory + 1 GiB storage: 64*3 + 25 = 217.
+	if got := priceDrift(driftResources{MemoryMiB: 64, StorageBytes: 1 * gib}).MonthlyCents; got != 217 {
+		t.Errorf("priceDrift(64 MiB, 1 GiB) = %d, want 217", got)
 	}
-	// empty slice still pays the base floor.
-	if got := priceDrift(driftResources{}).MonthlyCents; got != 100 {
-		t.Errorf("priceDrift(empty) = %d, want 100", got)
+	// empty slice costs nothing — no base fee anymore.
+	if got := priceDrift(driftResources{}).MonthlyCents; got != 0 {
+		t.Errorf("priceDrift(empty) = %d, want 0", got)
 	}
 }
