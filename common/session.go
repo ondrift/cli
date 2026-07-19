@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const SessionFile = "~/.drift/session.json"
@@ -161,18 +162,14 @@ func GetActiveSlice() string {
 	return data["active_slice"]
 }
 
-// GetUsername extracts the username from the stored JWT access token.
-// Returns an empty string if the session or token is missing/unparseable.
-func GetUsername() string {
-	token, _, err := GetTokenFromSession()
-	if err != nil || token == "" {
-		return ""
-	}
+// decodeTokenClaims decodes a JWT's payload segment (base64url, unverified —
+// the CLI has no way to check the signature; it only reads its own claims
+// for display/expiry purposes, the server is the real authority) into v.
+func decodeTokenClaims(token string, v any) error {
 	// JWT is three base64url-encoded segments separated by dots.
-	// The payload (second segment) contains {"username": "..."}.
 	parts := strings.SplitN(token, ".", 3)
 	if len(parts) < 2 {
-		return ""
+		return fmt.Errorf("malformed token")
 	}
 	// base64url → base64 (add padding).
 	payload := parts[1]
@@ -181,15 +178,44 @@ func GetUsername() string {
 	}
 	decoded, err := base64.StdEncoding.DecodeString(strings.NewReplacer("-", "+", "_", "/").Replace(payload))
 	if err != nil {
+		return err
+	}
+	return json.Unmarshal(decoded, v)
+}
+
+// GetUsername extracts the username from the stored JWT access token.
+// Returns an empty string if the session or token is missing/unparseable.
+func GetUsername() string {
+	token, _, err := GetTokenFromSession()
+	if err != nil || token == "" {
 		return ""
 	}
 	var claims struct {
 		Username string `json:"username"`
 	}
-	if json.Unmarshal(decoded, &claims) != nil {
+	if decodeTokenClaims(token, &claims) != nil {
 		return ""
 	}
 	return claims.Username
+}
+
+// TokenExpired reports whether the stored access token's `exp` claim has
+// already passed, checked locally against the system clock — no network
+// round trip. Treated as expired (true) if there's no session, no token, or
+// the token can't be parsed, since none of those give the caller anything
+// usable either.
+func TokenExpired() bool {
+	token, _, err := GetTokenFromSession()
+	if err != nil || token == "" {
+		return true
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if decodeTokenClaims(token, &claims) != nil || claims.Exp == 0 {
+		return true
+	}
+	return time.Now().Unix() >= claims.Exp
 }
 
 // GetOrCreateDeviceID returns a stable per-workstation random ID. Used to

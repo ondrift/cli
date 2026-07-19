@@ -108,16 +108,18 @@ func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reade
 	resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 
 	// Attempt token refresh.
-	if err := refreshAccessToken(); err != nil {
+	if err := RefreshAccessToken(); err != nil {
 		return nil, fmt.Errorf("session expired — run 'drift account login' to re-authenticate")
 	}
 
 	return send()
 }
 
-// refreshAccessToken uses the stored refresh token to obtain a new access
+// RefreshAccessToken uses the stored refresh token to obtain a new access
 // token from the API, persisting both new tokens to the session file.
-func refreshAccessToken() error {
+// Exported so callers can proactively refresh a locally-expired access token
+// (e.g. the portal's pre-launch session gate) without waiting for a 401.
+func RefreshAccessToken() error {
 	_, refreshToken, err := GetTokenFromSession()
 	if err != nil {
 		return err

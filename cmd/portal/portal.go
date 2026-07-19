@@ -155,10 +155,13 @@ func Run(version string, createName *string) error {
 	if !term.IsTerminal(fd) {
 		return fmt.Errorf("the drift dashboard needs an interactive terminal")
 	}
-	user := common.GetUsername()
-	if user == "" {
-		return fmt.Errorf("not logged in — run `drift account login` first")
+	// Gate launch on a usable session — shown (or silently refreshed) here,
+	// in cooked mode, before anything about the dashboard itself (model,
+	// raw mode, alt-screen) is touched. See login.go.
+	if err := ensureLoggedIn(); err != nil {
+		return err
 	}
+	user := common.GetUsername()
 
 	m := &model{user: user, active: common.GetActiveSlice(), version: version, cols: 80, rows: 24, fnExp: -1}
 	if w, h, err := term.GetSize(fd); err == nil && w > 0 && h > 0 {

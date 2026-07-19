@@ -32,7 +32,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func DoLogin(username, password string) {
+// DoLoginErr performs the login POST and persists the session, returning an
+// error instead of printing one. Lets callers outside the CLI-command UX
+// (the portal's pre-launch login window) react to a failed attempt
+// themselves — DoLogin below is just this plus the command's print-and-return
+// behavior.
+func DoLoginErr(username, password string) error {
 	jsonData, _ := json.Marshal(map[string]string{
 		"username":  username,
 		"password":  password,
@@ -43,32 +48,35 @@ func DoLogin(username, password string) {
 
 	resp, err := client.Post(common.APIBaseURL+"/login", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		fmt.Println(common.TransportError("log in", err))
-		return
+		return common.TransportError("log in", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := common.CheckResponse(resp, "log in")
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 
 	var respData map[string]string
 	if err := json.Unmarshal(body, &respData); err != nil {
-		fmt.Println("Couldn't log in: the API response didn't look right —", err)
-		return
+		return fmt.Errorf("couldn't log in: the API response didn't look right — %w", err)
 	}
 
 	token := respData["access_token"]
 	refreshToken := respData["refresh_token"]
 	if token == "" || refreshToken == "" {
-		fmt.Println("Couldn't log in: the API didn't return a full set of tokens. That's on us; please try again.")
-		return
+		return fmt.Errorf("couldn't log in: the API didn't return a full set of tokens. That's on us; please try again")
 	}
 
 	if err := common.SaveSession(token, refreshToken); err != nil {
-		fmt.Println("Logged in, but couldn't save your session to disk:", err)
+		return fmt.Errorf("logged in, but couldn't save your session to disk: %w", err)
+	}
+	return nil
+}
+
+func DoLogin(username, password string) {
+	if err := DoLoginErr(username, password); err != nil {
+		fmt.Println(err)
 		return
 	}
 	fmt.Printf("Logged in as %s.\n", username)
