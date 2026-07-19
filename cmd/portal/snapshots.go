@@ -158,23 +158,21 @@ func (m *model) sliceSummaryCards() []statCard {
 	return []statCard{slice, memory, footprint}
 }
 
-// renderSliceTab draws the active slice's overview + snapshots on the left and
-// the current settings panel on the right. Slice switch/create is the sidebar's
-// job; 's' snapshots, 'c' configures.
+// renderSliceTab draws a 2x2 grid (#CLITUI1): memory census + configuration
+// share the top row, snapshots + itemized bill share the row below — this
+// is what brings "Configuration" onto the same row as "Slice memory
+// census...", instead of the census sitting full-width above everything
+// else pushing the rest past a short terminal's visible height. Slice
+// switch/create is the sidebar's job; 's' snapshots, 'c' configures.
 func (m *model) renderSliceTab(b *strings.Builder) {
-	// At-a-glance summary cards, then the full memory census — the slice's real
-	// OOM picture — at full width (moved here from Canvas: the Slice tab is its
-	// home, and the census's long annotations don't fit the narrow left column
-	// below). The cards headline; the census elaborates the memory story.
+	// At-a-glance summary cards stay full width, above the grid.
 	if m.rt != nil {
 		for _, ln := range statCards(m.contentW-2, 2, m.sliceSummaryCards()) {
 			fmt.Fprintf(b, "  %s\r\n", ln)
 		}
 		b.WriteString("\r\n")
-		m.renderMemoryCensus(b)
-		b.WriteString("\r\n")
 	}
-	// Right column: the current settings. Left column: overview + snapshots.
+
 	rightW := 24
 	if rightW > m.contentW/2 {
 		rightW = m.contentW / 2
@@ -183,30 +181,41 @@ func (m *model) renderSliceTab(b *strings.Builder) {
 	if leftW < 20 {
 		leftW = 20
 	}
-
-	var lb strings.Builder
-	m.renderSliceOverview(&lb)
-	left := strings.Split(strings.TrimRight(lb.String(), "\r\n"), "\r\n")
-	right := m.settingsLines()
-
-	n := max(len(left), len(right))
-	for i := 0; i < n; i++ {
-		l, r := "", ""
-		if i < len(left) {
-			l = left[i]
+	renderPair := func(left, right []string) {
+		n := max(len(left), len(right))
+		for i := 0; i < n; i++ {
+			l, r := "", ""
+			if i < len(left) {
+				l = left[i]
+			}
+			if i < len(right) {
+				r = right[i]
+			}
+			fmt.Fprintf(b, "%s   %s\r\n", pad(truncVis(l, leftW), leftW), r)
 		}
-		if i < len(right) {
-			r = right[i]
-		}
-		fmt.Fprintf(b, "%s   %s\r\n", pad(truncVis(l, leftW), leftW), r)
 	}
+
+	// Row 1: memory census (left) + configuration (right).
+	var census []string
+	if m.rt != nil {
+		var cb strings.Builder
+		m.renderMemoryCensus(&cb)
+		census = strings.Split(strings.TrimRight(cb.String(), "\r\n"), "\r\n")
+	}
+	renderPair(census, m.settingsLines())
+	b.WriteString("\r\n")
+
+	// Row 2: snapshots (left) + itemized bill (right).
+	var ob strings.Builder
+	m.renderSliceOverview(&ob)
+	overview := strings.Split(strings.TrimRight(ob.String(), "\r\n"), "\r\n")
+	renderPair(overview, m.itemizedBillLines())
 }
 
-// renderSliceOverview is the left column: snapshots (#CLITUI2 — the
+// renderSliceOverview is row 2's left column: snapshots (#CLITUI2 — the
 // name/tier header that used to sit above this is gone; the slice name is
 // already shown in the top status bar, and "tier configured" told the user
-// nothing beyond "not free". The full memory census renders full-width
-// above this, in renderSliceTab).
+// nothing beyond "not free").
 func (m *model) renderSliceOverview(b *strings.Builder) {
 	fmt.Fprintf(b, "  \x1b[1mSnapshots\x1b[0m\r\n")
 	m.renderSnapshots(b)
@@ -216,7 +225,7 @@ func (m *model) renderSliceOverview(b *strings.Builder) {
 // the configurator edits) as a compact right-hand panel.
 func (m *model) settingsLines() []string {
 	if m.cfg == nil {
-		return []string{dim("SETTINGS"), "", dim("loading…")}
+		return []string{dim("Configuration"), "", dim("loading…")}
 	}
 	c := m.cfg.Config
 	const mb, kb = 1024 * 1024, 1024
@@ -226,7 +235,7 @@ func (m *model) settingsLines() []string {
 	pair := func(n, store int, unit string) string {
 		return fmt.Sprintf("%d · %d %s", n, store, unit)
 	}
-	out := []string{dim("SETTINGS")}
+	out := []string{dim("Configuration")}
 	if m.cfg.MonthlyCostCents > 0 {
 		out = append(out, row("monthly", fmt.Sprintf("$%.2f", float64(m.cfg.MonthlyCostCents)/100)))
 	} else {
@@ -256,6 +265,36 @@ func (m *model) settingsLines() []string {
 		"",
 		dim(" [c] configure"),
 	)
+	return out
+}
+
+// itemizedBillLines renders the active slice's current monthly cost
+// breakdown (#CLITUI1) — same shape as `drift project deploy`'s itemized
+// bill (cmd/project's LineItem/renderLineItems), fetched via the same
+// /ops/slice/price endpoint the configurator's own live-pricing already
+// uses (see fetchDocPrice).
+func (m *model) itemizedBillLines() []string {
+	out := []string{dim("Itemized bill")}
+	if m.priceErr != "" {
+		return append(out, "", dim(m.priceErr))
+	}
+	if m.price == nil {
+		return append(out, "", dim("loading…"))
+	}
+	billed := false
+	for _, it := range m.price.Items {
+		if it.UnitCents == 0 {
+			continue
+		}
+		billed = true
+		out = append(out, fmt.Sprintf(" %s%d x %s = %s",
+			pad(dim(it.Label), 13), it.Quantity, cents(it.UnitCents), cents(it.SubtotalCents)))
+	}
+	if !billed {
+		out = append(out, "", dim("free tier — nothing billed"))
+		return out
+	}
+	out = append(out, "", " "+pad(dim("total"), 13)+cGreen+cents(m.price.MonthlyCents)+"/mo"+cReset)
 	return out
 }
 

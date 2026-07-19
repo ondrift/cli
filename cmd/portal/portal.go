@@ -122,9 +122,11 @@ type model struct {
 	contentH int // main-pane content height (computed each render)
 
 	// Slice tab = active-slice overview + snapshots + current settings
-	snaps   []snapshotRow
-	snapSel int
-	cfg     *sliceDoc // current slice's config/tier (settings panel + configure)
+	snaps    []snapshotRow
+	snapSel  int
+	cfg      *sliceDoc    // current slice's config/tier (settings panel + configure)
+	price    *priceResult // itemized bill for cfg's current config (#CLITUI1)
+	priceErr string
 
 	// Backbone data explorer
 	bbPrim  int      // selected primitive (NoSQL/Cache/Queues/Blobs/Locks/Secrets)
@@ -687,6 +689,12 @@ func (m *model) load(tab int) {
 		if m.active != "" {
 			if doc, err := fetchSliceDoc(m.active); err == nil {
 				m.cfg = doc // current settings for the panel + configure pre-fill
+				m.priceErr = ""
+				if pr, err := fetchDocPrice(doc); err == nil {
+					m.price = pr // itemized bill (#CLITUI1)
+				} else {
+					m.price, m.priceErr = nil, err.Error()
+				}
 			}
 		}
 	case tabAtomic:
