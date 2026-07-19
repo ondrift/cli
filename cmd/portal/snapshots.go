@@ -202,22 +202,12 @@ func (m *model) renderSliceTab(b *strings.Builder) {
 	}
 }
 
-// renderSliceOverview is the left column: name/tier header + snapshots (the full
-// memory census renders full-width above this, in renderSliceTab).
+// renderSliceOverview is the left column: snapshots (#CLITUI2 — the
+// name/tier header that used to sit above this is gone; the slice name is
+// already shown in the top status bar, and "tier configured" told the user
+// nothing beyond "not free". The full memory census renders full-width
+// above this, in renderSliceTab).
 func (m *model) renderSliceOverview(b *strings.Builder) {
-	tier := ""
-	for _, s := range m.slices {
-		if s.Name == m.active {
-			tier = sliceCmd.TierLabel(s.Tier)
-			break
-		}
-	}
-	fmt.Fprintf(b, "  \x1b[1m%s\x1b[0m", m.activeOrDash())
-	if tier != "" {
-		fmt.Fprintf(b, "    \x1b[2mtier\x1b[0m %s", tier)
-	}
-	b.WriteString("\r\n\r\n") // full memory census now sits above (renderSliceTab)
-
 	fmt.Fprintf(b, "  \x1b[1mSnapshots\x1b[0m\r\n")
 	m.renderSnapshots(b)
 }
