@@ -53,7 +53,7 @@ import (
 var nameRe = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$`)
 
 // sizeRe matches `<integer>(KB|MB|GB)` — used by canvas_size,
-// nosql_storage, blob_max_size, function_memory.
+// nosql[].size, sql[].size, blobs[].size, blob_max_size, function_memory.
 var sizeRe = regexp.MustCompile(`^[0-9]+(KB|MB|GB)$`)
 
 // memoryRe is sizeRe minus KB — function memory caps don't go below
@@ -202,9 +202,6 @@ type AlertEntry struct {
 }
 
 type BackboneSection struct {
-	NoSQLStorage  string `yaml:"nosql_storage"`
-	SQLStorage    string `yaml:"sql_storage"`  // storage per SQL database (e.g. "100MB")
-	BlobStorage   string `yaml:"blob_storage"` // total blob storage (the billing driver, e.g. "1GB")
 	BlobMaxSize   string `yaml:"blob_max_size"`
 	BlobMaxCount  int    `yaml:"blob_max_count"` // free safety quota (not a price driver)
 	QueueMaxDepth int    `yaml:"queue_max_depth"`
@@ -222,26 +219,46 @@ type BackboneSection struct {
 	// SQL declares per-slice SQLite databases. Each entry becomes a
 	// `.db` file.
 	SQL []SQLEntry `yaml:"sql,omitempty"`
+
+	// Blobs declares named buckets in the per-slice blob store. Each entry
+	// carries its own storage quota — there is no slice-wide blob envelope.
+	Blobs []BlobEntry `yaml:"blobs,omitempty"`
 }
 
 // SQLEntry declares one SQL database. `Schema` is a path to a SQL
 // file with idempotent DDL (`CREATE TABLE IF NOT EXISTS`); it runs
 // on every deploy. `Seed` is a path to a SQL file that runs only
-// when the database has no user tables yet.
+// when the database has no user tables yet. `Size` is this database's
+// own storage quota (e.g. "32MB") — required, since it both prices and
+// is enforced from that value; there is no slice-wide default to fall
+// back to.
 type SQLEntry struct {
 	Name   string `yaml:"name"`
+	Size   string `yaml:"size"`
 	Schema string `yaml:"schema,omitempty"`
 	Seed   string `yaml:"seed,omitempty"`
 }
 
 type NoSQLEntry struct {
 	Name string `yaml:"name"`
+	// Size is this collection's own storage quota (e.g. "50MB") — required,
+	// since it both prices and is enforced from that value; there is no
+	// slice-wide default to fall back to.
+	Size string `yaml:"size"`
 	Seed string `yaml:"seed"` // path to JSONL
 	// TTL: how long a document lives after its LAST write before the
 	// platform deletes it — resets on every update. Duration string
 	// (durationRe: <int>[smhd]); empty = kept forever. Per-collection,
 	// not per-document.
 	TTL string `yaml:"ttl"`
+}
+
+// BlobEntry declares one named bucket in the blob store. `Size` is this
+// bucket's own storage quota (e.g. "100MB") — required, same reasoning as
+// NoSQLEntry.Size/SQLEntry.Size.
+type BlobEntry struct {
+	Name string `yaml:"name"`
+	Size string `yaml:"size"`
 }
 
 // CacheEntry is the long-form expansion. Short-form `<key>: <path>`
@@ -523,12 +540,6 @@ func mergeAtomic(base, overlay AtomicSection) AtomicSection {
 
 func mergeBackbone(base, overlay BackboneSection) BackboneSection {
 	out := base
-	if overlay.NoSQLStorage != "" {
-		out.NoSQLStorage = overlay.NoSQLStorage
-	}
-	if overlay.SQLStorage != "" {
-		out.SQLStorage = overlay.SQLStorage
-	}
 	if overlay.BlobMaxSize != "" {
 		out.BlobMaxSize = overlay.BlobMaxSize
 	}
@@ -552,6 +563,9 @@ func mergeBackbone(base, overlay BackboneSection) BackboneSection {
 	}
 	if len(overlay.SQL) > 0 {
 		out.SQL = overlay.SQL
+	}
+	if len(overlay.Blobs) > 0 {
+		out.Blobs = overlay.Blobs
 	}
 	if len(overlay.Queues) > 0 {
 		out.Queues = overlay.Queues
@@ -774,6 +788,25 @@ func (s *SQLEntry) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// UnmarshalYAML accepts either a bare-string (bucket name → no declared
+// size, which fails validation with a clear "missing a size" error) or a
+// map (the long form with name/size). Mirrors NoSQLEntry/SQLEntry so
+// `blobs: [uploads]` parses the same way, even though a bare bucket can
+// never pass validation now that size is mandatory.
+func (bk *BlobEntry) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		bk.Name = node.Value
+		return nil
+	}
+	type raw BlobEntry
+	var r raw
+	if err := node.Decode(&r); err != nil {
+		return err
+	}
+	*bk = BlobEntry(r)
+	return nil
+}
+
 // UnmarshalYAML accepts either a bare-string (canvas directory) or a
 // map (the long form with dir/route).
 func (c *CanvasEntry) UnmarshalYAML(node *yaml.Node) error {
@@ -931,31 +964,11 @@ func validate(m *Manifest) ParseErrors {
 
 	// backbone envelope
 	b := m.Slice.Backbone
-	if v := b.NoSQLStorage; v != "" && !sizeRe.MatchString(v) {
-		errs = append(errs, fmt.Sprintf("backbone.nosql_storage %q must be an integer ending in KB, MB, or GB", v))
-	}
 	if v := b.BlobMaxSize; v != "" && !sizeRe.MatchString(v) {
 		errs = append(errs, fmt.Sprintf("backbone.blob_max_size %q must be an integer ending in KB, MB, or GB", v))
 	}
-	if v := b.BlobStorage; v != "" && !sizeRe.MatchString(v) {
-		errs = append(errs, fmt.Sprintf("backbone.blob_storage %q must be an integer ending in KB, MB, or GB", v))
-	}
-	if v := b.SQLStorage; v != "" && !sizeRe.MatchString(v) {
-		errs = append(errs, fmt.Sprintf("backbone.sql_storage %q must be an integer ending in KB, MB, or GB", v))
-	}
 	if v := b.SecretMaxSize; v != "" && !sizeRe.MatchString(v) {
 		errs = append(errs, fmt.Sprintf("backbone.secret_max_size %q must be an integer ending in KB, MB, or GB", v))
-	}
-	// A declared collection/database with no storage envelope would price at
-	// 0 bytes (free) while the runtime quota check — gated on `> 0` — never
-	// engages either, so the primitive can grow unbounded for free. Require
-	// the size up front instead of silently defaulting one: the deployer is
-	// the only one who knows whether "small" means 50MB or 50GB.
-	if len(b.NoSQL) > 0 && b.NoSQLStorage == "" {
-		errs = append(errs, "backbone.nosql_storage is required when backbone.nosql declares any collection — pick a real limit (e.g. 50MB), it prices and is enforced from that value")
-	}
-	if len(b.SQL) > 0 && b.SQLStorage == "" {
-		errs = append(errs, "backbone.sql_storage is required when backbone.sql declares any database — pick a real limit (e.g. 50MB), it prices and is enforced from that value")
 	}
 	if b.Locks < 0 {
 		errs = append(errs, "backbone.locks must be >= 0")
@@ -975,6 +988,16 @@ func validate(m *Manifest) ParseErrors {
 		if !nameRe.MatchString(c.Name) {
 			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: collection name %q is invalid", i, c.Name))
 		}
+		// A declared collection with no size would price at 0 bytes (free)
+		// while the runtime quota check never engages either, so it could
+		// grow unbounded for free. Require the size up front instead of
+		// silently defaulting one: the deployer is the only one who knows
+		// whether "small" means 50MB or 50GB.
+		if c.Size == "" {
+			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q is missing a size — pick a real limit (e.g. 50MB), it prices and is enforced from that value", i, c.Name))
+		} else if !sizeRe.MatchString(c.Size) {
+			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q size %q must be an integer ending in KB, MB, or GB", i, c.Name, c.Size))
+		}
 		if c.TTL != "" && !durationRe.MatchString(c.TTL) {
 			errs = append(errs, fmt.Sprintf("backbone.nosql[%d]: %q ttl %q must be an integer ending in s, m, h, or d", i, c.Name, c.TTL))
 		}
@@ -987,6 +1010,30 @@ func validate(m *Manifest) ParseErrors {
 			if seedErrs := validateJSONLSeed(c.Name, seedPath); len(seedErrs) > 0 {
 				errs = append(errs, seedErrs...)
 			}
+		}
+	}
+
+	// sql databases
+	for i, d := range b.SQL {
+		if !nameRe.MatchString(d.Name) {
+			errs = append(errs, fmt.Sprintf("backbone.sql[%d]: database name %q is invalid", i, d.Name))
+		}
+		if d.Size == "" {
+			errs = append(errs, fmt.Sprintf("backbone.sql[%d]: %q is missing a size — pick a real limit (e.g. 50MB), it prices and is enforced from that value", i, d.Name))
+		} else if !sizeRe.MatchString(d.Size) {
+			errs = append(errs, fmt.Sprintf("backbone.sql[%d]: %q size %q must be an integer ending in KB, MB, or GB", i, d.Name, d.Size))
+		}
+	}
+
+	// blob buckets
+	for i, bk := range b.Blobs {
+		if !nameRe.MatchString(bk.Name) {
+			errs = append(errs, fmt.Sprintf("backbone.blobs[%d]: bucket name %q is invalid", i, bk.Name))
+		}
+		if bk.Size == "" {
+			errs = append(errs, fmt.Sprintf("backbone.blobs[%d]: %q is missing a size — pick a real limit (e.g. 100MB), it prices and is enforced from that value", i, bk.Name))
+		} else if !sizeRe.MatchString(bk.Size) {
+			errs = append(errs, fmt.Sprintf("backbone.blobs[%d]: %q size %q must be an integer ending in KB, MB, or GB", i, bk.Name, bk.Size))
 		}
 	}
 
@@ -1058,8 +1105,6 @@ func validateEnvOverride(name string, ov Slice) []string {
 	check("atomic.function_memory", ov.Atomic.FunctionMemory, memoryRe, "an integer ending in MB or GB")
 	check("atomic.function_timeout", ov.Atomic.FunctionTimeout, timeoutRe, "an integer ending in s, m, or h")
 	check("atomic.rate_limit", ov.Atomic.RateLimit, rateRe, "an integer per s, min, or h (e.g. 1000/min)")
-	check("backbone.nosql_storage", ov.Backbone.NoSQLStorage, sizeRe, "an integer ending in KB, MB, or GB")
-	check("backbone.sql_storage", ov.Backbone.SQLStorage, sizeRe, "an integer ending in KB, MB, or GB")
 	check("backbone.blob_max_size", ov.Backbone.BlobMaxSize, sizeRe, "an integer ending in KB, MB, or GB")
 	check("backbone.secret_max_size", ov.Backbone.SecretMaxSize, sizeRe, "an integer ending in KB, MB, or GB")
 	check("canvas.canvas_size", ov.Canvas.CanvasSize, sizeRe, "an integer ending in KB, MB, or GB")

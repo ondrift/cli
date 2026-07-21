@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -52,7 +53,23 @@ type transformResult struct {
 }
 
 type driftFn struct{ slug, cron string }
-type driftColl struct{ name, seed string }
+type driftColl struct {
+	name, seed string
+	sizeMB     int // declared backbone.nosql[].size, computed from the migrated data (see collSizeMB)
+}
+
+// collSizeMB turns a migrated collection's actual seed byte count into a
+// declared `size` (now mandatory on every backbone.nosql[] entry) with real
+// headroom for post-migration growth: round up to the next whole MiB, then
+// double it, with a 5MB floor so even a near-empty collection gets enough
+// room for its first few real writes. This is a starting point, not a
+// considered capacity plan — buildDriftfile's generated Driftfile already
+// carries a "review before deploy" banner, and the caller adds a per-
+// collection TODO pointing at exactly that.
+func collSizeMB(dataBytes int) int {
+	mb := max((dataBytes+1024*1024-1)/(1024*1024), 1)
+	return max(mb*2, 5)
+}
 
 // runTransform is the offline Stage-2 engine: azure_export/ → drift_workspace/.
 func runTransform(inDir, outDir string, m Manifest) (transformResult, error) {
@@ -112,7 +129,9 @@ func runTransform(inDir, outDir string, m Manifest) (transformResult, error) {
 		if err := writeWS(outDir, seed, transformed, 0o644); err != nil {
 			return res, err
 		}
-		colls = append(colls, driftColl{coll.Name, seed})
+		sizeMB := collSizeMB(len(transformed))
+		colls = append(colls, driftColl{coll.Name, seed, sizeMB})
+		todos = append(todos, fmt.Sprintf("%s: backbone.nosql size set to %dMB (2x the migrated data, min 5MB) — review and adjust for expected growth", coll.Name, sizeMB))
 		if lossy {
 			todos = append(todos, fmt.Sprintf("%s: documents had an `id` field remapped to `_id` (Mongo key); original kept as `_azure_id`", coll.Name))
 		}
@@ -265,7 +284,7 @@ func buildDriftfile(name string, fns []driftFn, colls []driftColl, secrets []Man
 		if len(colls) > 0 {
 			b.WriteString("  nosql:\n")
 			for _, c := range colls {
-				b.WriteString("    - name: " + c.name + "\n      seed: " + c.seed + "\n")
+				b.WriteString("    - name: " + c.name + "\n      size: " + strconv.Itoa(c.sizeMB) + "MB\n      seed: " + c.seed + "\n")
 			}
 		}
 		if len(secrets) > 0 {

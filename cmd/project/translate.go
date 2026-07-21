@@ -75,8 +75,11 @@ type BackboneLimits struct {
 }
 
 type BackboneSQLLimits struct {
-	MaxDatabases    int
-	MaxStorageBytes int
+	MaxDatabases int
+	// Databases carries each declared database's own storage quota, keyed
+	// by database name — the billing/enforcement driver. No more slice-wide
+	// envelope: every database sets its own size in the Driftfile.
+	Databases map[string]int
 }
 
 type BackboneSecretsLimits struct {
@@ -87,12 +90,16 @@ type BackboneSecretsLimits struct {
 type BackboneBlobsLimits struct {
 	MaxCount           int
 	MaxSizeInBytesEach int
-	MaxStorageBytes    int // total blob storage (the billing driver)
+	// Buckets carries each declared bucket's own storage quota, keyed by
+	// bucket name — the billing/enforcement driver.
+	Buckets map[string]int
 }
 
 type BackboneNoSQLLimits struct {
-	MaxCollections  int
-	MaxStorageBytes int
+	MaxCollections int
+	// Collections carries each declared collection's own storage quota,
+	// keyed by collection name — the billing/enforcement driver.
+	Collections map[string]int
 }
 
 type BackboneQueuesLimits struct {
@@ -192,12 +199,20 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	}
 
 	// ── Backbone envelope knobs ────────────────────────────────────
-	if v := m.Slice.Backbone.NoSQLStorage; v != "" {
-		bytes, err := parseSizeBytes(v)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("backbone.nosql_storage: %v", err))
-		} else {
-			cfg.Backbone.NoSQL.MaxStorageBytes = bytes
+	// Per-item storage: each declared collection/database/bucket carries its
+	// own `size`, keyed by name — there is no slice-wide envelope any more.
+	// Validation already guarantees every entry has a non-empty Size by the
+	// time translation runs; a parse failure here would be an internal bug
+	// (a size that passed sizeRe but parseSizeBytes rejects), not user error.
+	if len(m.Slice.Backbone.NoSQL) > 0 {
+		cfg.Backbone.NoSQL.Collections = make(map[string]int, len(m.Slice.Backbone.NoSQL))
+		for _, c := range m.Slice.Backbone.NoSQL {
+			bytes, err := parseSizeBytes(c.Size)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("backbone.nosql[%s].size: %v", c.Name, err))
+				continue
+			}
+			cfg.Backbone.NoSQL.Collections[c.Name] = bytes
 		}
 	}
 	if v := m.Slice.Backbone.BlobMaxSize; v != "" {
@@ -208,12 +223,15 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 			cfg.Backbone.Blobs.MaxSizeInBytesEach = bytes
 		}
 	}
-	if v := m.Slice.Backbone.BlobStorage; v != "" {
-		bytes, err := parseSizeBytes(v)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("backbone.blob_storage: %v", err))
-		} else {
-			cfg.Backbone.Blobs.MaxStorageBytes = bytes
+	if len(m.Slice.Backbone.Blobs) > 0 {
+		cfg.Backbone.Blobs.Buckets = make(map[string]int, len(m.Slice.Backbone.Blobs))
+		for _, bk := range m.Slice.Backbone.Blobs {
+			bytes, err := parseSizeBytes(bk.Size)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("backbone.blobs[%s].size: %v", bk.Name, err))
+				continue
+			}
+			cfg.Backbone.Blobs.Buckets[bk.Name] = bytes
 		}
 	}
 	if v := m.Slice.Backbone.BlobMaxCount; v > 0 {
@@ -222,12 +240,15 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 	if v := m.Slice.Backbone.QueueMaxDepth; v > 0 {
 		cfg.Backbone.Queues.MaxDepthEach = v
 	}
-	if v := m.Slice.Backbone.SQLStorage; v != "" {
-		bytes, err := parseSizeBytes(v)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("backbone.sql_storage: %v", err))
-		} else {
-			cfg.Backbone.SQL.MaxStorageBytes = bytes
+	if len(m.Slice.Backbone.SQL) > 0 {
+		cfg.Backbone.SQL.Databases = make(map[string]int, len(m.Slice.Backbone.SQL))
+		for _, d := range m.Slice.Backbone.SQL {
+			bytes, err := parseSizeBytes(d.Size)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("backbone.sql[%s].size: %v", d.Name, err))
+				continue
+			}
+			cfg.Backbone.SQL.Databases[d.Name] = bytes
 		}
 	}
 	if v := m.Slice.Backbone.SecretMaxSize; v != "" {

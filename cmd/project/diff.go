@@ -18,6 +18,7 @@ package project
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -47,7 +48,7 @@ func (v Verdict) String() string {
 
 // FieldDelta records one resource/envelope dimension that changed.
 type FieldDelta struct {
-	Path      string // human-readable path, e.g. "atomic.functions" or "backbone.nosql_storage"
+	Path      string // human-readable path, e.g. "atomic.functions" or "backbone.nosql.<name>"
 	Live      int    // current value on the live slice (0 if Create)
 	Wanted    int    // value the manifest declares
 	IsBytes   bool   // render as a size string instead of a bare integer
@@ -122,6 +123,40 @@ func Diff(sliceName string, manifest SliceConfig, liveCfg *SliceConfig, liveCost
 	}
 }
 
+// perItemDeltas builds one FieldDelta per name appearing in EITHER map — a
+// collection/database/bucket declared with its own `size` now, not a single
+// slice-wide envelope. Deliberately NOT Omittable: unlike the old blanket
+// scalar (where Wanted==0 meant "the Driftfile didn't mention this knob"),
+// a name missing from `wanted` here means the Driftfile stopped declaring
+// that specific item — a real shrink (its quota goes to 0) that the
+// abort-on-shrink gate must catch, not silently ignore. Sorted by name for
+// deterministic output.
+func perItemDeltas(prefix string, live, wanted map[string]int) []FieldDelta {
+	seen := make(map[string]bool, len(live)+len(wanted))
+	for name := range live {
+		seen[name] = true
+	}
+	for name := range wanted {
+		seen[name] = true
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]FieldDelta, 0, len(names))
+	for _, name := range names {
+		out = append(out, FieldDelta{
+			Path:    fmt.Sprintf("%s.%s", prefix, name),
+			Live:    live[name],
+			Wanted:  wanted[name],
+			IsBytes: true,
+		})
+	}
+	return out
+}
+
 // compareFields enumerates every declared dimension and returns the
 // non-zero / non-equal ones. When includeZeroLive is true (Create
 // path), every field with a positive Wanted produces a delta
@@ -150,13 +185,15 @@ func compareFields(live, wanted SliceConfig, includeZeroLive bool) []FieldDelta 
 		{Path: "atomic.function_timeout", Live: live.Atomic.MaxFunctionRuntimeInSeconds, Wanted: wanted.Atomic.MaxFunctionRuntimeInSeconds, IsTime: true, Omittable: true},
 		{Path: "atomic.rate_limit_per_minute", Live: live.Atomic.MaxNumberOfRequestsPerMinute, Wanted: wanted.Atomic.MaxNumberOfRequestsPerMinute, Omittable: true},
 		{Path: "atomic.log_retention", Live: live.Atomic.MaxNumberOfHoursForLogRetention, Wanted: wanted.Atomic.MaxNumberOfHoursForLogRetention, IsHours: true, Omittable: true},
-		{Path: "backbone.nosql_storage", Live: live.Backbone.NoSQL.MaxStorageBytes, Wanted: wanted.Backbone.NoSQL.MaxStorageBytes, IsBytes: true, Omittable: true},
 		{Path: "backbone.queue_max_depth", Live: live.Backbone.Queues.MaxDepthEach, Wanted: wanted.Backbone.Queues.MaxDepthEach, Omittable: true},
 		{Path: "backbone.blob_max_size", Live: live.Backbone.Blobs.MaxSizeInBytesEach, Wanted: wanted.Backbone.Blobs.MaxSizeInBytesEach, IsBytes: true, Omittable: true},
 		{Path: "backbone.blob_max_count", Live: live.Backbone.Blobs.MaxCount, Wanted: wanted.Backbone.Blobs.MaxCount, Omittable: true},
 		{Path: "backbone.backup_retention", Live: live.Backbone.BackupRetentionDays, Wanted: wanted.Backbone.BackupRetentionDays, IsDays: true, Omittable: true},
 		{Path: "canvas.max_size", Live: live.Canvas.TotalMaxSizeInBytes, Wanted: wanted.Canvas.TotalMaxSizeInBytes, IsBytes: true, Omittable: true},
 	}
+	pairs = append(pairs, perItemDeltas("backbone.nosql", live.Backbone.NoSQL.Collections, wanted.Backbone.NoSQL.Collections)...)
+	pairs = append(pairs, perItemDeltas("backbone.sql", live.Backbone.SQL.Databases, wanted.Backbone.SQL.Databases)...)
+	pairs = append(pairs, perItemDeltas("backbone.blobs", live.Backbone.Blobs.Buckets, wanted.Backbone.Blobs.Buckets)...)
 	out := []FieldDelta{}
 	for _, p := range pairs {
 		if includeZeroLive {

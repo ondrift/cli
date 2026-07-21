@@ -9,6 +9,14 @@ import "testing"
 // previously walked a Hacker-tier user straight into VerdictAbort's
 // suggested `--allow-destructive` resize, which silently upgrades the
 // slice to a paid tier. See docs/alpha-feedback/free-tier-same-footprint-deploy-billing-bug.md.
+//
+// NoSQL/SQL/Blobs storage used to be exactly this kind of Omittable envelope
+// knob (one blanket `nosql_storage` scalar); it isn't any more — size now
+// lives ON each declared collection/database/bucket, so there's no separate
+// per-primitive envelope value a redeploy could "forget" to repeat while
+// still declaring the same resource list (see perItemDeltas in diff.go).
+// This test only needs to cover the knobs that are still genuinely
+// Omittable scalars.
 func TestDiff_OmittedEnvelopeKnobsDoNotShrink(t *testing.T) {
 	// A live Hacker-tier slice already has real, non-zero envelope values —
 	// exactly like core/common/plan.HackerPreset populates on creation.
@@ -21,12 +29,13 @@ func TestDiff_OmittedEnvelopeKnobsDoNotShrink(t *testing.T) {
 			MaxNumberOfHoursForLogRetention: 24,
 		},
 		Backbone: BackboneLimits{
-			NoSQL: BackboneNoSQLLimits{MaxCollections: 2, MaxStorageBytes: 10 * 1024 * 1024},
+			NoSQL: BackboneNoSQLLimits{MaxCollections: 2, Collections: map[string]int{"a": 5 * 1024 * 1024, "b": 5 * 1024 * 1024}},
 		},
 	}
 
-	// A Driftfile that declares the same 3 functions but doesn't repeat any
-	// envelope knob — translate.go leaves them at their Go zero value.
+	// A Driftfile that declares the same 3 functions and the same two
+	// collections (same names, same sizes) but doesn't repeat any Omittable
+	// scalar envelope knob — translate.go leaves those at their Go zero value.
 	wanted := SliceConfig{
 		Atomic: AtomicLimits{
 			MaxNumberOfFunctions: 3,
@@ -34,7 +43,7 @@ func TestDiff_OmittedEnvelopeKnobsDoNotShrink(t *testing.T) {
 			// MaxNumberOfRequestsPerMinute, MaxNumberOfHoursForLogRetention: omitted (0)
 		},
 		Backbone: BackboneLimits{
-			NoSQL: BackboneNoSQLLimits{MaxCollections: 2 /* MaxStorageBytes omitted (0) */},
+			NoSQL: BackboneNoSQLLimits{MaxCollections: 2, Collections: map[string]int{"a": 5 * 1024 * 1024, "b": 5 * 1024 * 1024}},
 		},
 	}
 
@@ -82,6 +91,54 @@ func TestDiff_ExplicitLargerEnvelopeKnobIsStillAGrow(t *testing.T) {
 	d := Diff("myapp", wanted, &live, 0, 500)
 	if d.Verdict != VerdictGrow {
 		t.Fatalf("verdict = %s, want grow", d.Verdict)
+	}
+}
+
+// TestDiff_RemovedCollectionIsAShrink confirms that dropping a previously
+// declared collection from the Driftfile — even though it's a per-item map
+// key disappearing rather than a scalar changing — is still caught as a
+// real shrink (its quota effectively goes to 0), not silently ignored the
+// way an Omittable scalar's absence would be.
+func TestDiff_RemovedCollectionIsAShrink(t *testing.T) {
+	live := SliceConfig{Backbone: BackboneLimits{
+		NoSQL: BackboneNoSQLLimits{Collections: map[string]int{"posts": 50 * 1024 * 1024}},
+	}}
+	wanted := SliceConfig{Backbone: BackboneLimits{
+		NoSQL: BackboneNoSQLLimits{Collections: map[string]int{}},
+	}}
+
+	d := Diff("myapp", wanted, &live, 0, 0)
+	if d.Verdict != VerdictAbort {
+		t.Fatalf("verdict = %s, want abort — removing a declared collection is a real shrink", d.Verdict)
+	}
+}
+
+// TestDiff_PerItemShrinkCaughtEvenIfAggregateGrows is the core reason
+// per-item deltas exist instead of one summed total: shrinking collection
+// "a" while growing collection "b" by more must still trip the abort gate,
+// even though the SUM of both moved up. A blanket-total comparison would
+// hide the shrink entirely.
+func TestDiff_PerItemShrinkCaughtEvenIfAggregateGrows(t *testing.T) {
+	live := SliceConfig{Backbone: BackboneLimits{
+		NoSQL: BackboneNoSQLLimits{Collections: map[string]int{"a": 100 * 1024 * 1024, "b": 10 * 1024 * 1024}},
+	}}
+	wanted := SliceConfig{Backbone: BackboneLimits{
+		// "a" shrinks by 60MB, "b" grows by 90MB — net +30MB overall.
+		NoSQL: BackboneNoSQLLimits{Collections: map[string]int{"a": 40 * 1024 * 1024, "b": 100 * 1024 * 1024}},
+	}}
+
+	d := Diff("myapp", wanted, &live, 0, 0)
+	if d.Verdict != VerdictAbort {
+		t.Fatalf("verdict = %s, want abort — collection \"a\" shrank even though the total grew", d.Verdict)
+	}
+	foundShrink := false
+	for _, s := range d.Shrinks {
+		if s.Path == "backbone.nosql.a" {
+			foundShrink = true
+		}
+	}
+	if !foundShrink {
+		t.Fatalf("shrinks = %+v, want an entry for backbone.nosql.a", d.Shrinks)
 	}
 }
 

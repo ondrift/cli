@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestParseDriftfile_RestaurantTemplate parses the canonical restaurant
@@ -159,31 +161,30 @@ canvas: ./canvas
 // with "cannot unmarshal !!str into project.SQLEntry"). It mirrors the
 // nosql short form — a bare string is a database with no schema/seed,
 // created lazily on first use.
+// TestParseDriftfile_SQLShorthandString checks the SQLEntry.UnmarshalYAML
+// shape acceptance directly (bare string vs. long form) rather than through
+// a full ParseDriftfile round trip: a bare-string entry can never carry a
+// `size`, and size is now mandatory, so a full Driftfile using the bare
+// form would fail validation regardless of whether the shorthand itself
+// parsed correctly. Decoding directly isolates the thing this test actually
+// verifies — the unmarshal shape — from that unrelated validation rule.
 func TestParseDriftfile_SQLShorthandString(t *testing.T) {
-	tmp := t.TempDir()
-	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
-name: hello
-backbone:
-  sql:
-    - ledger
-    - name: audit
-      schema: ./sql/audit.sql
-canvas: ./canvas
-`)
-	mustMkdir(t, filepath.Join(tmp, "canvas"))
-
-	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
-	if err != nil {
-		t.Fatalf("ParseDriftfile failed: %v", err)
+	var sql []SQLEntry
+	if err := yaml.Unmarshal([]byte(`
+- ledger
+- name: audit
+  schema: ./sql/audit.sql
+`), &sql); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
 	}
-	if len(m.Slice.Backbone.SQL) != 2 {
-		t.Fatalf("backbone.sql count = %d, want 2", len(m.Slice.Backbone.SQL))
+	if len(sql) != 2 {
+		t.Fatalf("backbone.sql count = %d, want 2", len(sql))
 	}
-	if m.Slice.Backbone.SQL[0].Name != "ledger" || m.Slice.Backbone.SQL[0].Schema != "" {
-		t.Errorf("sql[0] = %+v, want bare {Name: ledger}", m.Slice.Backbone.SQL[0])
+	if sql[0].Name != "ledger" || sql[0].Schema != "" {
+		t.Errorf("sql[0] = %+v, want bare {Name: ledger}", sql[0])
 	}
-	if m.Slice.Backbone.SQL[1].Name != "audit" || m.Slice.Backbone.SQL[1].Schema != "./sql/audit.sql" {
-		t.Errorf("sql[1] = %+v, want {Name: audit, Schema: ./sql/audit.sql}", m.Slice.Backbone.SQL[1])
+	if sql[1].Name != "audit" || sql[1].Schema != "./sql/audit.sql" {
+		t.Errorf("sql[1] = %+v, want {Name: audit, Schema: ./sql/audit.sql}", sql[1])
 	}
 }
 
@@ -245,7 +246,9 @@ atomic:
   - submit-reservation
   - confirm-reservation
 backbone:
-  nosql: [reservations]
+  nosql:
+    - name: reservations
+      size: 50MB
   queues: [reservation-queue]
   cache:
     menu: ./backbone/menu.json
@@ -380,15 +383,16 @@ atomic:
   function_memory: 128MB
   functions: [redirect]
 backbone:
-  nosql_storage: 500MB
-  nosql: [links]
+  nosql:
+    - name: links
+      size: 500MB
 canvas: ./web
 environments:
   prod: {}
   staging:
     log_retention: 3d
     atomic: { rate_limit: 200/min, function_memory: 64MB }
-    backbone: { nosql_storage: 50MB }
+    backbone: { nosql: [{name: links, size: 50MB}] }
   dev:
     atomic: { rate_limit: 20/min }
 `)
@@ -426,14 +430,14 @@ environments:
 	if m.Slice.Atomic.RateLimit != "200/min" || m.Slice.Atomic.FunctionMemory != "64MB" {
 		t.Errorf("staging atomic overrides not applied: %+v", m.Slice.Atomic)
 	}
-	if m.Slice.LogRetention != "3d" || m.Slice.Backbone.NoSQLStorage != "50MB" {
-		t.Errorf("staging overrides not applied: retention=%q nosql_storage=%q", m.Slice.LogRetention, m.Slice.Backbone.NoSQLStorage)
+	if m.Slice.LogRetention != "3d" {
+		t.Errorf("staging overrides not applied: retention=%q", m.Slice.LogRetention)
 	}
 	if len(m.Slice.Atomic.Functions) != 1 || m.Slice.Atomic.Functions[0].Name != "redirect" {
 		t.Errorf("staging functions = %+v, want shared [redirect]", m.Slice.Atomic.Functions)
 	}
-	if len(m.Slice.Backbone.NoSQL) != 1 || m.Slice.Backbone.NoSQL[0].Name != "links" {
-		t.Errorf("staging nosql = %+v, want shared [links]", m.Slice.Backbone.NoSQL)
+	if len(m.Slice.Backbone.NoSQL) != 1 || m.Slice.Backbone.NoSQL[0].Name != "links" || m.Slice.Backbone.NoSQL[0].Size != "50MB" {
+		t.Errorf("staging nosql = %+v, want shared [links] with overridden size 50MB", m.Slice.Backbone.NoSQL)
 	}
 
 	// dev → only rate overridden; everything else inherits the base.

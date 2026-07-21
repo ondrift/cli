@@ -18,7 +18,7 @@ func TestManifestToSliceConfig_Counts(t *testing.T) {
 				},
 			},
 			Backbone: BackboneSection{
-				NoSQL:               []NoSQLEntry{{Name: "x"}, {Name: "y"}},
+				NoSQL:               []NoSQLEntry{{Name: "x", Size: "10MB"}, {Name: "y", Size: "20MB"}},
 				Queues:              []string{"q1", "q2", "q3"},
 				Secrets:             map[string]string{"A": "1", "B": "2"},
 				RealtimeConnections: 200,
@@ -61,7 +61,7 @@ func TestManifestToSliceConfig_EnvelopeKnobs(t *testing.T) {
 				RateLimit:       "1000/min",
 			},
 			Backbone: BackboneSection{
-				NoSQLStorage:  "500MB",
+				NoSQL:         []NoSQLEntry{{Name: "events", Size: "500MB"}},
 				BlobMaxSize:   "5MB",
 				QueueMaxDepth: 1000,
 			},
@@ -83,8 +83,8 @@ func TestManifestToSliceConfig_EnvelopeKnobs(t *testing.T) {
 	if cfg.Atomic.MaxNumberOfRequestsPerMinute != 1000 {
 		t.Errorf("rate_limit: got %d, want 1000", cfg.Atomic.MaxNumberOfRequestsPerMinute)
 	}
-	if cfg.Backbone.NoSQL.MaxStorageBytes != 500*1024*1024 {
-		t.Errorf("nosql_storage: got %d, want %d", cfg.Backbone.NoSQL.MaxStorageBytes, 500*1024*1024)
+	if cfg.Backbone.NoSQL.Collections["events"] != 500*1024*1024 {
+		t.Errorf("nosql[events].size: got %d, want %d", cfg.Backbone.NoSQL.Collections["events"], 500*1024*1024)
 	}
 	if cfg.Backbone.Blobs.MaxSizeInBytesEach != 5*1024*1024 {
 		t.Errorf("blob_max_size: got %d, want %d", cfg.Backbone.Blobs.MaxSizeInBytesEach, 5*1024*1024)
