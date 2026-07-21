@@ -3,12 +3,13 @@ package slice
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/ondrift/cli/common"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/ondrift/cli/v2/common"
 
 	"github.com/spf13/cobra"
 )

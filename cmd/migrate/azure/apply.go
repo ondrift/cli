@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ondrift/cli/common"
+	"github.com/ondrift/cli/v2/common"
 )
 
 func getApplyCmd() *cobra.Command {

@@ -3,10 +3,10 @@ package atomic
 import (
 	"github.com/spf13/cobra"
 
-	cmd "github.com/ondrift/cli/cmd/atomic/cmd"
-	cmd_deploy "github.com/ondrift/cli/cmd/atomic/cmd/deploy"
-	cmd_new "github.com/ondrift/cli/cmd/atomic/cmd/new"
-	cmd_run "github.com/ondrift/cli/cmd/atomic/cmd/run"
+	cmd "github.com/ondrift/cli/v2/cmd/atomic/cmd"
+	cmd_deploy "github.com/ondrift/cli/v2/cmd/atomic/cmd/deploy"
+	cmd_new "github.com/ondrift/cli/v2/cmd/atomic/cmd/new"
+	cmd_run "github.com/ondrift/cli/v2/cmd/atomic/cmd/run"
 )
 
 func GetCmd() *cobra.Command {

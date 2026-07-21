@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ondrift/cli/common"
+	"github.com/ondrift/cli/v2/common"
 )
 
 // platformStatus holds the result of a status fetch while the popup is open.

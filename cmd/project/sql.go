@@ -12,11 +12,12 @@ package project
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/ondrift/cli/common"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ondrift/cli/v2/common"
 )
 
 type liveSQL struct {

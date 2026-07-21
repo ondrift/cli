@@ -28,7 +28,7 @@ import (
 	"runtime"
 	"strings"
 
-	atomic_common "github.com/ondrift/cli/cmd/atomic/common"
+	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
 )
 
 // buildRust compiles the Rust function to a static Linux binary client-side

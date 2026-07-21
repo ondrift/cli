@@ -20,8 +20,8 @@ import (
 	"syscall"
 	"time"
 
-	sliceCmd "github.com/ondrift/cli/cmd/slice"
-	"github.com/ondrift/cli/common"
+	sliceCmd "github.com/ondrift/cli/v2/cmd/slice"
+	"github.com/ondrift/cli/v2/common"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"

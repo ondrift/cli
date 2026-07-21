@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"path/filepath"
 
-	project "github.com/ondrift/cli/cmd/project"
-	"github.com/ondrift/cli/common"
+	project "github.com/ondrift/cli/v2/cmd/project"
+	"github.com/ondrift/cli/v2/common"
 
 	"github.com/spf13/cobra"
 )

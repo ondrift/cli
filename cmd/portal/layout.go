@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	sliceCmd "github.com/ondrift/cli/cmd/slice"
-	"github.com/ondrift/cli/common"
+	sliceCmd "github.com/ondrift/cli/v2/cmd/slice"
+	"github.com/ondrift/cli/v2/common"
 )
 
 const sidebarW = 26

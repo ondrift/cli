@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	sliceCmd "github.com/ondrift/cli/cmd/slice"
-	common "github.com/ondrift/cli/common"
+	sliceCmd "github.com/ondrift/cli/v2/cmd/slice"
+	common "github.com/ondrift/cli/v2/common"
 )
 
 // handleSlice applies Slice-tab keys (snapshot actions); returns true if it

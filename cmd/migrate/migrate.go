@@ -11,7 +11,7 @@ package migrate
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/ondrift/cli/cmd/migrate/azure"
+	"github.com/ondrift/cli/v2/cmd/migrate/azure"
 )
 
 // GetCmd returns the `drift migrate` command group.

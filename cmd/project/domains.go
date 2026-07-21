@@ -10,10 +10,11 @@ package project
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/ondrift/cli/common"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/ondrift/cli/v2/common"
 )
 
 type liveDomain struct {

@@ -5,11 +5,12 @@ package atomic_cmd
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/ondrift/cli/common"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/ondrift/cli/v2/common"
 
 	"github.com/spf13/cobra"
 )

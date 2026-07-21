@@ -40,8 +40,8 @@ import (
 	"strings"
 	"time"
 
-	atomic_common "github.com/ondrift/cli/cmd/atomic/common"
-	"github.com/ondrift/cli/common"
+	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
+	"github.com/ondrift/cli/v2/common"
 
 	"github.com/spf13/cobra"
 )

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ondrift/cli/common"
+	"github.com/ondrift/cli/v2/common"
 )
 
 // announcement is one entry in the hosted feed (announcements.json). All optional.

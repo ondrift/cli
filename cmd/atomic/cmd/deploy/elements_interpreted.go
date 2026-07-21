@@ -16,8 +16,8 @@ import (
 	"runtime"
 	"strings"
 
-	atomic_common "github.com/ondrift/cli/cmd/atomic/common"
-	"github.com/ondrift/cli/common"
+	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
+	"github.com/ondrift/cli/v2/common"
 )
 
 // interpretedLang carries the per-language bits the generic deployer needs.

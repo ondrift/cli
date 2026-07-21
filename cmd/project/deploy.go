@@ -32,9 +32,9 @@ import (
 	"sync"
 	"time"
 
-	atomic_cmd "github.com/ondrift/cli/cmd/atomic/cmd/deploy"
-	atomic_common "github.com/ondrift/cli/cmd/atomic/common"
-	"github.com/ondrift/cli/common"
+	atomic_cmd "github.com/ondrift/cli/v2/cmd/atomic/cmd/deploy"
+	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
+	"github.com/ondrift/cli/v2/common"
 
 	"github.com/spf13/cobra"
 )

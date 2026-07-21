@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ondrift/cli/common"
+	"github.com/ondrift/cli/v2/common"
 )
 
 var memOptions = []int{32, 64, 128, 256} // MiB — the configurator's memory seats

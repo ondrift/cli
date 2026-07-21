@@ -26,8 +26,8 @@ import (
 	"strings"
 	"time"
 
-	atomic_common "github.com/ondrift/cli/cmd/atomic/common"
-	"github.com/ondrift/cli/common"
+	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
+	"github.com/ondrift/cli/v2/common"
 )
 
 // digestVersion is mixed into every digest. Bump it whenever the algorithm

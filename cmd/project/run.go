@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 	"time"
 
-	atomic_cmd "github.com/ondrift/cli/cmd/atomic/cmd/deploy"
-	"github.com/ondrift/cli/common"
+	atomic_cmd "github.com/ondrift/cli/v2/cmd/atomic/cmd/deploy"
+	"github.com/ondrift/cli/v2/common"
 
 	"github.com/spf13/cobra"
 )

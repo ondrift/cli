@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	slate_cmd "github.com/ondrift/cli/cmd/canvas/cmd"
+	slate_cmd "github.com/ondrift/cli/v2/cmd/canvas/cmd"
 
 	"github.com/spf13/cobra"
 )

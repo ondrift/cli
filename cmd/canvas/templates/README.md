@@ -5,7 +5,7 @@
 nothing here is embedded into the `drift` binary yet — there is no
 `drift canvas new --with-e2ee` (or similar) scaffold command. For now this
 is a **vendor-by-copy** template: grab `e2ee.js` from this directory (or
-straight from [github.com/ondrift/cli](https://github.com/ondrift/cli), the
+straight from [github.com/ondrift/cli/v2](https://github.com/ondrift/cli/v2), the
 `cli` repo is public) and drop it into your app's own JS alongside your
 other source. A scaffold command that does this automatically is a natural
 follow-up, not yet built.

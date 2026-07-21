@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	atomic_common "github.com/ondrift/cli/cmd/atomic/common"
+	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
 )
 
 func (r *devRunner) generateNode() error {

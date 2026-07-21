@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"strings"
 
-	account "github.com/ondrift/cli/cmd/account"
-	"github.com/ondrift/cli/common"
+	account "github.com/ondrift/cli/v2/cmd/account"
+	"github.com/ondrift/cli/v2/common"
 )
 
 // ensureLoggedIn gates dashboard launch on a usable session: nothing to do

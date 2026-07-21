@@ -13,7 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/ondrift/cli/common"
+	"github.com/ondrift/cli/v2/common"
 
 	"github.com/spf13/cobra"
 )

@@ -21,10 +21,11 @@ package project
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/ondrift/cli/common"
 	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/ondrift/cli/v2/common"
 )
 
 // liveEgressView is the JSON shape returned by GET /ops/atomic/egress.

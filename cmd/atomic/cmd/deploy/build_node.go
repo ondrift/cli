@@ -16,7 +16,7 @@ import (
 	"runtime"
 	"strings"
 
-	atomic_common "github.com/ondrift/cli/cmd/atomic/common"
+	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
 )
 
 func buildNode(absFolder, method, name string) (string, error) {

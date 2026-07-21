@@ -3,8 +3,9 @@ package backbone
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/ondrift/cli/common"
 	"net/http"
+
+	"github.com/ondrift/cli/v2/common"
 
 	"github.com/spf13/cobra"
 )

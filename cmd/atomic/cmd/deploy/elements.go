@@ -25,8 +25,8 @@ import (
 	"strings"
 	"sync"
 
-	atomic_common "github.com/ondrift/cli/cmd/atomic/common"
-	"github.com/ondrift/cli/common"
+	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
+	"github.com/ondrift/cli/v2/common"
 )
 
 // DefaultElementName is the name of the implicit flat element (atomic/*.<lang>).
