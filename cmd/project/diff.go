@@ -245,6 +245,19 @@ func renderLineItems(items []LineItem) string {
 		if it.UnitCents == 0 {
 			continue
 		}
+		// bb_storage is the one line item whose Quantity (MiB, for a
+		// readable small number) doesn't match its own Label/UnitCents
+		// (per GiB) — displaying it via the generic "quantity x unit"
+		// format reads as "50 x €0.25 = €0.01", which looks like broken
+		// math (and worse, like 50 GiB for a cent) unless you already know
+		// Quantity is secretly MiB. Show the same GiB unit as the label
+		// and rate here instead; SubtotalCent (already byte-accurate)
+		// doesn't change.
+		if it.Key == "bb_storage" {
+			gib := float64(it.Quantity) / 1024
+			fmt.Fprintf(&sb, "    %-24s %.4f x €%s = €%s\n", it.Label, gib, formatEuros(it.UnitCents), formatEuros(it.SubtotalCent))
+			continue
+		}
 		fmt.Fprintf(&sb, "    %-24s %d x €%s = €%s\n", it.Label, it.Quantity, formatEuros(it.UnitCents), formatEuros(it.SubtotalCent))
 	}
 	return sb.String()
