@@ -946,6 +946,17 @@ func validate(m *Manifest) ParseErrors {
 	if v := b.SecretMaxSize; v != "" && !sizeRe.MatchString(v) {
 		errs = append(errs, fmt.Sprintf("backbone.secret_max_size %q must be an integer ending in KB, MB, or GB", v))
 	}
+	// A declared collection/database with no storage envelope would price at
+	// 0 bytes (free) while the runtime quota check — gated on `> 0` — never
+	// engages either, so the primitive can grow unbounded for free. Require
+	// the size up front instead of silently defaulting one: the deployer is
+	// the only one who knows whether "small" means 50MB or 50GB.
+	if len(b.NoSQL) > 0 && b.NoSQLStorage == "" {
+		errs = append(errs, "backbone.nosql_storage is required when backbone.nosql declares any collection — pick a real limit (e.g. 50MB), it prices and is enforced from that value")
+	}
+	if len(b.SQL) > 0 && b.SQLStorage == "" {
+		errs = append(errs, "backbone.sql_storage is required when backbone.sql declares any database — pick a real limit (e.g. 50MB), it prices and is enforced from that value")
+	}
 	if b.Locks < 0 {
 		errs = append(errs, "backbone.locks must be >= 0")
 	}
