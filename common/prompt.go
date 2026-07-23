@@ -15,13 +15,20 @@ import (
 	"golang.org/x/term"
 )
 
+// stdinReader is shared across every stdin line read below. bufio.Reader reads
+// ahead in chunks, so a fresh reader per call silently drops whatever it
+// over-read past the first line — fatal for a two-stage confirm (e.g. `drift
+// account delete` / `drift slice delete`), where the second prompt's answer can
+// already be sitting in a discarded buffer when the input is piped rather than
+// typed. One shared reader preserves it. Mirrors driftadmin's common/prompt.go.
+var stdinReader = bufio.NewReader(os.Stdin)
+
 // PromptForInput prints a label and reads a line from stdin. The
 // returned string has its trailing newline stripped. If stdin is
 // closed or unreadable, returns the empty string.
 func PromptForInput(label string) string {
 	fmt.Fprintf(os.Stdout, "%s: ", label)
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
+	line, err := stdinReader.ReadString('\n')
 	if err != nil {
 		return strings.TrimRight(line, "\r\n")
 	}
@@ -44,8 +51,7 @@ func PromptForInputHidden(label string) string {
 	// the on-screen masking is missing.
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
-		reader := bufio.NewReader(os.Stdin)
-		line, _ := reader.ReadString('\n')
+		line, _ := stdinReader.ReadString('\n')
 		return strings.TrimRight(line, "\r\n")
 	}
 
@@ -68,7 +74,6 @@ func PromptForInputHidden(label string) string {
 // docker login, kubectl, doctl, op. Returns the empty string on
 // read error.
 func ReadPasswordFromStdin() string {
-	reader := bufio.NewReader(os.Stdin)
-	line, _ := reader.ReadString('\n')
+	line, _ := stdinReader.ReadString('\n')
 	return strings.TrimRight(line, "\r\n")
 }
