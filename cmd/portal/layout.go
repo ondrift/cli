@@ -727,12 +727,24 @@ func (m *model) openNewSlice() {
 	m.focus = focusMain
 }
 
-// validSliceName mirrors the platform's slice naming rule (^[a-z0-9]{1,30}$).
+// validSliceName mirrors the platform's slice naming rule: lowercase
+// alphanumeric with interior hyphens, 1–30 chars, no leading or trailing
+// hyphen (drift-common/slice.NameRegex = ^[a-z0-9](?:[a-z0-9-]{0,28}[a-z0-9])?$).
+// Interior hyphens are what a Driftfile already accepts (e.g. "sam-rivera"),
+// so the TUI must accept them too (#CLITUI4).
 func validSliceName(s string) bool {
 	if len(s) < 1 || len(s) > 30 {
 		return false
 	}
-	for _, r := range s {
+	for i, r := range s {
+		if r == '-' {
+			// Interior only — a leading or trailing hyphen is rejected, so the
+			// name still splits unambiguously in the <user>-<slice> subdomain.
+			if i == 0 || i == len(s)-1 {
+				return false
+			}
+			continue
+		}
 		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
 			return false
 		}

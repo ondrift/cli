@@ -359,7 +359,7 @@ func (m *model) handleForm(k key) bool {
 				break
 			}
 			m.input = &inputPrompt{
-				label:      "slice name (a–z 0–9):",
+				label:      "slice name (a–z 0–9, interior -):",
 				buf:        f.name,
 				allowEmpty: true,
 				run: func(s string) string {
@@ -406,7 +406,7 @@ func (m *model) submitForm() {
 		return
 	}
 	if !validSliceName(f.name) {
-		m.status = "✗ name must be lowercase a–z / 0–9, 1–30 chars"
+		m.status = "✗ name must be lowercase a–z / 0–9 with interior hyphens, 1–30 chars"
 		return
 	}
 	tier := "custom"
