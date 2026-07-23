@@ -175,7 +175,6 @@ func GetCreateCmd() *cobra.Command {
 			fmt.Println("  2. Deploy your app                              :: 'drift deploy drift.yaml'")
 			fmt.Println("\nManage slices                                    :: 'drift slice list'")
 			fmt.Println("Switch active slice                               :: 'drift slice use <name>'")
-			fmt.Println("Check your usage anytime                          :: 'drift account usage'")
 			fmt.Println("Happy building!")
 		},
 		Example: `  drift account create
