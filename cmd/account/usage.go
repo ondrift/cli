@@ -12,7 +12,7 @@ import (
 )
 
 // GetAccountCmd returns the "drift account" command group.
-// Subcommands: create, login, reset-password, usage.
+// Subcommands: create, login, reset-password, usage, delete.
 func GetAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "account",
@@ -20,7 +20,8 @@ func GetAccountCmd() *cobra.Command {
 		Example: `  drift account create
   drift account login
   drift account reset-password
-  drift account usage`,
+  drift account usage
+  drift account delete`,
 		GroupID: "account",
 	}
 	cmd.AddCommand(
@@ -28,6 +29,7 @@ func GetAccountCmd() *cobra.Command {
 		GetLoginCmd(),
 		GetResetPasswordCmd(),
 		GetUsageCmd(),
+		GetDeleteCmd(),
 	)
 	return cmd
 }

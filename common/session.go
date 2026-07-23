@@ -108,6 +108,20 @@ func GetTokenFromSession() (token string, refreshToken string, err error) {
 	return token, refreshToken, nil
 }
 
+// ClearSession removes the stored session file entirely. Used after the
+// account it belonged to is deleted, so the CLI stops holding credentials for
+// an account that no longer exists. A missing file is not an error.
+func ClearSession() error {
+	path, err := expandPath(SessionFile)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // readSessionMap loads the raw session JSON as a string map.
 func readSessionMap() (map[string]string, error) {
 	path, err := expandPath(SessionFile)
