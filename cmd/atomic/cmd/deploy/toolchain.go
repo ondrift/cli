@@ -185,6 +185,15 @@ func ensureDocker() error {
 
 // toolchainImage is the language build image, overridable per language via
 // DRIFT_BUILD_IMAGE_<LANG> for air-gapped mirrors or version pinning.
+//
+// Every image here MUST contain git. Every Drift SDK is a git-sourced
+// dependency — `drift-sdk @ git+https://…` (pip), `github:ondrift/sdk` (npm),
+// `gem "drift-sdk", git:` (bundler), `{"type":"vcs"}` (composer),
+// `drift-sdk = { git = … }` (cargo) — so a build image without git cannot
+// resolve the SDK, which is the default path rather than an edge case. The
+// -slim Python/Node/Ruby variants ship no git and were caught doing exactly
+// that on the first real deploy: "Cannot find command 'git'". This never
+// surfaced while builds ran on the host, because a developer always has git.
 func toolchainImage(lang string) string {
 	if v := os.Getenv("DRIFT_BUILD_IMAGE_" + strings.ToUpper(lang)); v != "" {
 		return v
@@ -195,13 +204,13 @@ func toolchainImage(lang string) string {
 	case "rust":
 		return "rust:1-bookworm" // same base as the slice's own Dockerfile
 	case "python":
-		return "python:3.13-slim"
+		return "python:3.13" // NOT -slim: needs git for the SDK
 	case "node":
-		return "node:22-slim"
+		return "node:22" // NOT -slim: needs git for the SDK
 	case "php":
 		return "composer:2" // php + composer; entrypoint is composer (see caller)
 	case "ruby":
-		return "ruby:3.1-slim" // matches the runner's bundled Ruby dir (3.1.x)
+		return "ruby:3.1" // NOT -slim: needs git; same 3.1.x the runner bundles
 	}
 	return ""
 }
