@@ -65,30 +65,11 @@ func StageElementsLocally(elements []Element, runnerDir string, quiet bool) erro
 	slotSink = localSlotSink(runnerDir)
 	defer func() { slotSink = prev }()
 
-	// Build in throwaway language containers so the user needs only Docker — no
-	// go/cargo/pip/npm/composer/ruby on the host. Opt out with
-	// DRIFT_RUN_HOST_BUILD=1 (faster if you already have the toolchains).
-	if !hostBuildRequested() {
-		base, err := containerBuildBaseDir()
-		if err != nil {
-			return err
-		}
-		// Staging tempdirs must live where the Docker VM shares the filesystem —
-		// macOS does not share the default $TMPDIR (/var/folders/…), so a bind
-		// mount of one would be empty. Point TMPDIR at the shared base for the
-		// build and restore it after.
-		prevTmp, hadTmp := os.LookupEnv("TMPDIR")
-		os.Setenv("TMPDIR", base) // #nosec G104
-		toolchainContainerMode = true
-		defer func() {
-			toolchainContainerMode = false
-			if hadTmp {
-				os.Setenv("TMPDIR", prevTmp) // #nosec G104
-			} else {
-				os.Unsetenv("TMPDIR") // #nosec G104
-			}
-		}()
-	}
+	// Every build runs in a throwaway language container (see toolchain.go), so
+	// the user needs only Docker — no go/cargo/pip/npm/composer/ruby on the host —
+	// and the artifact matches the slice's architecture rather than this machine's.
+	// Staging dirs come from stageTempDir(), which allocates somewhere the Docker
+	// VM can actually bind-mount; no TMPDIR juggling is needed here.
 
 	for _, el := range elements {
 		digest, _ := ElementDigest(el.Dir, el.Name)

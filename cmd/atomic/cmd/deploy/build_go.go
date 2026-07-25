@@ -42,7 +42,7 @@ func buildGo(absFolder, method, name string) (string, error) {
 // and is responsible for RemoveAll(buildDir). Each call gets its own tempdir,
 // so parallel deploys never race; the user's source is never modified.
 func buildGoElementStage(srcDir, name string) (string, error) {
-	buildDir, err := os.MkdirTemp("", "drift-go-build-")
+	buildDir, err := stageTempDir("drift-go-build-")
 	if err != nil {
 		return "", fmt.Errorf("create build tempdir: %w", err)
 	}
@@ -98,7 +98,7 @@ func buildGoEntrypoint(buildDir, funcName, method, binBase string) (string, erro
 // parallelism turns the per-function link into the only marginal cost. Returns
 // the binary path and the fn dir; the caller must RemoveAll(fnDir).
 func buildGoEntrypointIsolated(stageDir, funcName, method, binBase string) (bin, fnDir string, err error) {
-	fnDir, err = os.MkdirTemp("", "drift-go-fn-")
+	fnDir, err = stageTempDir("drift-go-fn-")
 	if err != nil {
 		return "", "", fmt.Errorf("create fn build dir: %w", err)
 	}

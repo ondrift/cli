@@ -3,17 +3,16 @@
 // package.json is present) so the user's declared dependencies — the
 // Drift SDK among them — resolve into node_modules. The CLI is
 // SDK-agnostic: it installs whatever the manifest declares, never an
-// injected copy. `--os=linux --cpu=<arch>` makes platform-specific
-// optional deps (sharp, argon2, …) resolve to the linux binaries the
-// runner needs. Returns a tar.gz of the staged directory.
+// injected copy. The install runs in a node image under the SLICE's
+// --platform, so platform-specific optional deps (sharp, argon2, …)
+// resolve to the binaries the runner can actually execute.
+// Returns a tar.gz of the staged directory.
 package atomic_cmd
 
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
@@ -30,7 +29,7 @@ func buildNode(absFolder, method, name string) (string, error) {
 	sourceModule := strings.TrimSuffix(filepath.Base(sourceFile), ".js")
 
 	// Create a staging directory.
-	stageDir, err := os.MkdirTemp("", "drift-node-")
+	stageDir, err := stageTempDir("drift-node-")
 	if err != nil {
 		return "", fmt.Errorf("create staging dir: %w", err)
 	}
@@ -58,24 +57,9 @@ func buildNode(absFolder, method, name string) (string, error) {
 
 	// Install the user's declared dependencies (the Drift SDK is whatever
 	// the function's package.json declares) when a package.json is present.
-	// `--os=linux --cpu=<arch>` resolves linux platform binaries for native
-	// optional deps. The CLI is SDK-agnostic — it installs the manifest.
-	if data, rerr := os.ReadFile(filepath.Join(absFolder, "package.json")); rerr == nil { // #nosec G304 -- controlled base dir
-		if werr := os.WriteFile(filepath.Join(stageDir, "package.json"), data, 0o644); werr != nil { // #nosec G306 -- build-time artefact
-			return "", fmt.Errorf("write staged package.json: %w", werr)
-		}
-		if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "package-lock.json")); lerr == nil { // #nosec G304 -- controlled base dir
-			_ = os.WriteFile(filepath.Join(stageDir, "package-lock.json"), lockData, 0o644) // #nosec G306 -- build-time artefact
-		}
-		npmCPU := "x64"
-		if runtime.GOARCH == "arm64" {
-			npmCPU = "arm64"
-		}
-		cmd := exec.Command("npm", "install", "--production", "--silent", "--os=linux", "--cpu="+npmCPU) // #nosec G204
-		cmd.Dir = stageDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("npm install error: %w\n%s", err, string(out))
-		}
+	// The CLI is SDK-agnostic — it installs the manifest.
+	if err := installNodeDeps(absFolder, stageDir); err != nil {
+		return "", err
 	}
 
 	// Create tar.gz archive in a unique temp file to avoid races when

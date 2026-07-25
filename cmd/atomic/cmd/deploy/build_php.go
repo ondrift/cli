@@ -9,7 +9,6 @@ package atomic_cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -25,7 +24,7 @@ func buildPHP(absFolder, method, name string) (string, error) {
 	}
 	sourceModule := strings.TrimSuffix(filepath.Base(sourceFile), ".php")
 
-	stageDir, err := os.MkdirTemp("", "drift-php-")
+	stageDir, err := stageTempDir("drift-php-")
 	if err != nil {
 		return "", fmt.Errorf("create staging dir: %w", err)
 	}
@@ -53,23 +52,8 @@ func buildPHP(absFolder, method, name string) (string, error) {
 	// Install the user's declared packages (the Drift SDK among them) if a
 	// composer.json is present. The CLI is SDK-agnostic — it installs the
 	// manifest verbatim.
-	composerPath := filepath.Join(absFolder, "composer.json")
-	if _, serr := os.Stat(composerPath); serr == nil {
-		data, rerr := os.ReadFile(composerPath) // #nosec G304 -- controlled base dir
-		if rerr != nil {
-			return "", fmt.Errorf("read composer.json: %w", rerr)
-		}
-		if werr := os.WriteFile(filepath.Join(stageDir, "composer.json"), data, 0o644); werr != nil { // #nosec G306 -- build-time artefact
-			return "", fmt.Errorf("write staged composer.json: %w", werr)
-		}
-		if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "composer.lock")); lerr == nil { // #nosec G304 -- controlled base dir
-			_ = os.WriteFile(filepath.Join(stageDir, "composer.lock"), lockData, 0o644) // #nosec G306 -- build-time artefact
-		}
-		cmd := exec.Command("composer", "install", "--no-dev", "--ignore-platform-reqs", "--quiet", "--no-interaction") // #nosec G204
-		cmd.Dir = stageDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("composer install error: %w\n%s", err, string(out))
-		}
+	if err := installPHPDeps(absFolder, stageDir); err != nil {
+		return "", err
 	}
 
 	archiveFile, err := os.CreateTemp("", fmt.Sprintf("drift-php-%s-*.tar.gz", safeTmpName(name)))

@@ -9,7 +9,6 @@ package atomic_cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -29,7 +28,7 @@ func buildPython(absFolder, method, name string) (string, error) {
 	sourceModule := strings.TrimSuffix(filepath.Base(sourceFile), ".py")
 
 	// Create a staging directory for the archive.
-	stageDir, err := os.MkdirTemp("", "drift-python-")
+	stageDir, err := stageTempDir("drift-python-")
 	if err != nil {
 		return "", fmt.Errorf("create staging dir: %w", err)
 	}
@@ -58,17 +57,15 @@ func buildPython(absFolder, method, name string) (string, error) {
 	// Install the user's declared dependencies (the Drift SDK among them)
 	// into vendor/ if a requirements.txt is present. The wrapper prepends
 	// vendor/ to sys.path. The CLI is SDK-agnostic — it installs the
-	// manifest verbatim. No --platform/--only-binary: a git-source dep
-	// (like the SDK) can't be a prebuilt wheel; functions needing
-	// linux-native wheels should depend on PyPI-published packages.
-	reqPath := filepath.Join(absFolder, "requirements.txt")
-	if _, err := os.Stat(reqPath); err == nil {
-		vendorDir := filepath.Join(stageDir, "vendor")
-		cmd := exec.Command("pip3", "install", "-t", vendorDir, "-r", reqPath, "--quiet") // #nosec G204
-		cmd.Dir = absFolder
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("pip install error: %w\n%s", err, string(out))
-		}
+	// manifest verbatim.
+	//
+	// No --platform/--only-binary is needed, and that is the point: the build
+	// runs in a python image under the SLICE's --platform, so pip resolves the
+	// native wheels for the target architecture by simply being there. On the
+	// host this silently produced manylinux_x86_64 wheels for an arm64 slice
+	// (and the reverse), which crashed at first invocation rather than at build.
+	if err := installPythonDeps(absFolder, stageDir); err != nil {
+		return "", err
 	}
 
 	// Create tar.gz archive in a unique temp file to avoid races when

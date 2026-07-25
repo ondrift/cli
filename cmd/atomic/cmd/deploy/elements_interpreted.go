@@ -13,10 +13,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
-	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
 	"github.com/ondrift/cli/v2/common"
 )
 
@@ -52,7 +50,7 @@ func DeployInterpretedElement(el Element, digest string, quiet bool) error {
 		}
 	}
 
-	stageDir, err := os.MkdirTemp("", "drift-"+lg.label+"-element-")
+	stageDir, err := stageTempDir("drift-" + lg.label + "-element-")
 	if err != nil {
 		return fmt.Errorf("create staging dir: %w", err)
 	}
@@ -177,11 +175,9 @@ func installNodeDeps(absFolder, stageDir string) error {
 	if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "package-lock.json")); lerr == nil { // #nosec G304
 		_ = os.WriteFile(filepath.Join(stageDir, "package-lock.json"), lockData, 0o644) // #nosec G306
 	}
-	npmCPU := "x64"
-	if runtime.GOARCH == "arm64" {
-		npmCPU = "arm64"
-	}
-	if out, err := runToolchain(toolchainCmd{lang: "node", dir: stageDir, name: "npm", args: []string{"install", "--production", "--silent", "--os=linux", "--cpu=" + npmCPU}}); err != nil {
+	// --os/--cpu name the SLICE's platform, not this machine's, so npm resolves
+	// the right optionalDependencies (sharp, argon2, …) for the runner.
+	if out, err := runToolchain(toolchainCmd{lang: "node", dir: stageDir, name: "npm", args: []string{"install", "--production", "--silent", "--os=linux", "--cpu=" + npmCPU()}}); err != nil {
 		return fmt.Errorf("npm install error: %w\n%s", err, string(out))
 	}
 	return nil
@@ -206,23 +202,16 @@ func installRubyDeps(absFolder, stageDir string) error {
 	}
 	// --standalone emits vendor/bundle/bundler/setup.rb which the wrapper loads
 	// without requiring bundler at runtime. BUNDLE_PATH/WITHOUT go through env so
-	// this works across bundler 2.x–4.x. Host build resolves a Ruby >= 3.0 (Apple's
-	// 2.6 is too old); the container build uses the image's bundle and needs none.
+	// this works across bundler 2.x–4.x. The image owns the Ruby (no host Ruby to
+	// discover) and runs under the slice's --platform, so a gem with a C extension
+	// builds for the architecture the runner actually has.
 	tc := toolchainCmd{
 		lang: "ruby", dir: stageDir, name: "bundle",
 		args: []string{"install", "--standalone", "--quiet"},
 		env:  map[string]string{"BUNDLE_PATH": "vendor/bundle", "BUNDLE_WITHOUT": "development:test"},
 	}
-	rbVer := "image"
-	if !toolchainContainerMode {
-		rb, ferr := atomic_common.FindRuby()
-		if ferr != nil {
-			return ferr
-		}
-		tc.hostName, tc.hostPath, rbVer = rb.Bundle, rb.BinDir, rb.Version
-	}
 	if out, err := runToolchain(tc); err != nil {
-		return fmt.Errorf("bundle install error (ruby %s): %w\n%s", rbVer, err, string(out))
+		return fmt.Errorf("bundle install error (%s): %w\n%s", toolchainImage("ruby"), err, string(out))
 	}
 	return nil
 }

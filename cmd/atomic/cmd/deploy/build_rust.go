@@ -1,31 +1,22 @@
 // build_rust.go — Rust build path. Stages .rs files, generates the
 // wrapper, writes the function's Cargo.toml (the user's, or a default
-// skeleton), runs `cargo build --release --target
-// {x86_64,aarch64}-unknown-linux-musl`, and returns the compiled binary.
-// The CLI is SDK-agnostic: the Drift SDK is whatever the Cargo.toml
-// declares; cargo fetches it.
+// skeleton), and compiles a static musl binary for the SLICE's
+// architecture inside the rust image. The CLI is SDK-agnostic: the Drift
+// SDK is whatever the Cargo.toml declares; cargo fetches it.
 //
-// Two non-obvious bits worth keeping visible:
-//
-//   - Toolchain pinning. A common dev setup has both Homebrew's `rust`
-//     formula and rustup on PATH; brew's cargo shadows rustup's, but
-//     brew's rustc lacks the musl target — the cross-compile silently
-//     fails with "can't find crate for core". We resolve rustup's
-//     toolchain dir explicitly, prepend it to PATH, and pin RUSTC.
-//   - No external linker. We link with Rust's bundled rust-lld
-//     (CARGO_TARGET_*_LINKER) instead of a musl cross-gcc, so a Rust
-//     deploy needs only rustup — no Homebrew toolchain. This holds
-//     because the SDK is pure Rust by default (TLS is opt-in); a function
-//     that turns on the SDK's `tls` feature pulls ring (C) and then does
-//     need a C cross-compiler (the build error points the way).
+// The build always runs in a container (see toolchain.go). That removes the
+// two host-toolchain hazards this file used to carry — a Homebrew cargo
+// shadowing rustup's and lacking the musl target, and the need to locate a
+// bundled rust-lld to avoid an external musl cross-linker — because the image
+// owns the toolchain and the container already IS the target architecture.
+// A function that opts into the SDK's `tls` feature still pulls ring (C/asm);
+// that compiles natively in the image rather than cross-compiling.
 package atomic_cmd
 
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	atomic_common "github.com/ondrift/cli/v2/cmd/atomic/common"
@@ -42,7 +33,7 @@ func buildRust(absFolder, method, name string) (string, error) {
 	}
 	sourceModule := strings.TrimSuffix(filepath.Base(sourceFile), ".rs")
 
-	stageDir, err := os.MkdirTemp("", "drift-rust-")
+	stageDir, err := stageTempDir("drift-rust-")
 	if err != nil {
 		return "", fmt.Errorf("create staging dir: %w", err)
 	}
@@ -87,22 +78,13 @@ func buildRust(absFolder, method, name string) (string, error) {
 		return "", fmt.Errorf("generate wrapper: %w", err)
 	}
 
-	// Build for Linux (cross-compile). Match the host arch since Rancher Desktop
-	// runs containers with the same architecture as the host.
-	target := "x86_64-unknown-linux-musl"
-	if runtime.GOARCH == "arm64" {
-		target = "aarch64-unknown-linux-musl"
-	}
+	// The musl triple for the SLICE's architecture — never the host's. See
+	// toolchain.go: the container runs under --platform, so this compiles
+	// natively rather than cross-compiling.
+	target := rustTarget()
 
-	// `drift project run` compiles in the rust image (the host needs no Rust);
-	// the cloud path uses the host rustup toolchain. Both write the binary to the
-	// same target/<triple>/release path read below.
-	if toolchainContainerMode {
-		if out, err := runRustContainer(stageDir, target); err != nil {
-			return "", fmt.Errorf("cargo build error (container, target %s): %w\n%s\n%s", target, err, string(out), rustBuildHint(string(out), target))
-		}
-	} else if err := buildRustHost(stageDir, target); err != nil {
-		return "", err
+	if out, err := runRustContainer(stageDir, target); err != nil {
+		return "", fmt.Errorf("cargo build error (target %s): %w\n%s\n%s", target, err, string(out), rustBuildHint(string(out), target))
 	}
 
 	binaryPath := filepath.Join(stageDir, "target", target, "release", "atomic-function")
@@ -118,75 +100,17 @@ func buildRust(absFolder, method, name string) (string, error) {
 	return outputPath, nil
 }
 
-// buildRustHost compiles the staged crate with the host's rustup toolchain,
-// linking via the bundled rust-lld so no external musl cross-linker is needed
-// (deploy Rust with rustup alone). Extracted verbatim from the cloud build path;
-// `drift project run` uses runRustContainer instead.
-func buildRustHost(stageDir, target string) error {
-	cmd := exec.Command("cargo", "build", "--release", "--target", target) // #nosec G204
-	cmd.Dir = stageDir
-	cmd.Env = os.Environ()
-
-	rustcBin := "rustc" // fallback if rustup isn't installed
-	if rustupPath, err := exec.LookPath("rustup"); err == nil {
-		// Make sure the musl target's std is present — idempotent, no-op if
-		// it's already installed. "Have Rust, go": the user shouldn't have to
-		// remember `rustup target add`.
-		_ = exec.Command(rustupPath, "target", "add", target).Run() // #nosec G204
-
-		// Prefer rustup's toolchain (brew's rustc lacks the musl target; see
-		// the package comment). Pin cargo + rustc explicitly.
-		if toolchainDir, runErr := exec.Command(rustupPath, "which", "--toolchain", "stable", "cargo").Output(); runErr == nil {
-			cargoBin := strings.TrimSpace(string(toolchainDir))
-			binDir := filepath.Dir(cargoBin)
-			rustcBin = filepath.Join(binDir, "rustc")
-			cmd.Path = cargoBin
-			cmd.Args[0] = cargoBin
-			cmd.Env = append(cmd.Env, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-			cmd.Env = append(cmd.Env, "RUSTC="+rustcBin)
-		}
-	}
-
-	// Link with Rust's own rust-lld (ships in every toolchain) so NO external
-	// musl cross-linker is needed — the whole point: deploy Rust with rustup
-	// alone. This works because the SDK is pure Rust (its ureq has TLS off by
-	// default). A function that opts into the SDK's `tls` feature pulls ring
-	// (C/asm) and will need a C cross-compiler — see rustBuildHint.
-	if lld := findRustLLD(rustcBin); lld != "" {
-		linkerEnv := fmt.Sprintf("CARGO_TARGET_%s_LINKER", strings.ReplaceAll(strings.ToUpper(target), "-", "_"))
-		cmd.Env = append(cmd.Env, linkerEnv+"="+lld)
-	}
-
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("cargo build error (target %s): %w\n%s\n%s", target, err, string(out), rustBuildHint(string(out), target))
-	}
-	return nil
-}
-
-// findRustLLD locates the toolchain's bundled rust-lld linker under the
-// rustc sysroot (…/lib/rustlib/<host>/bin/rust-lld), or returns "" if it
-// can't be found. Using it means we never need an external musl cross-linker.
-func findRustLLD(rustcBin string) string {
-	out, err := exec.Command(rustcBin, "--print", "sysroot").Output() // #nosec G204 -- rustcBin is a discovered toolchain binary, not user input
-	if err != nil {
-		return ""
-	}
-	matches, _ := filepath.Glob(filepath.Join(strings.TrimSpace(string(out)), "lib", "rustlib", "*", "bin", "rust-lld"))
-	if len(matches) > 0 {
-		return matches[0]
-	}
-	return ""
-}
-
-// rustBuildHint tailors the failure message. A `ring` error means the
-// function enabled outbound HTTPS (the SDK's `tls` feature), which drags in
-// C/assembly — that needs a C cross-toolchain. Anything else is most likely a
-// missing target or a non-rustup toolchain.
+// rustBuildHint tailors the failure message. A `ring` error means the function
+// enabled outbound HTTPS (the SDK's `tls` feature), which drags in C/assembly.
+// That now compiles natively in the image, so the usual cause is a missing musl
+// C toolchain in the image rather than a cross-compilation problem.
 func rustBuildHint(buildOutput, target string) string {
 	if strings.Contains(strings.ToLower(buildOutput), "ring") {
-		return "Hint: outbound HTTPS (the SDK's \"tls\" feature) pulls `ring`, which has C/assembly. " +
-			"Cross-compiling it to musl needs a C toolchain — install zig and run `cargo install cargo-zigbuild`, " +
-			"or use only http:// (drop the \"tls\" feature) to keep the build pure-Rust."
+		return "Hint: outbound HTTPS (the SDK's \"tls\" feature) pulls `ring`, which has C/assembly and " +
+			"needs musl-gcc in the build image. Point DRIFT_BUILD_IMAGE_RUST at an image with musl-tools " +
+			"installed, or use only http:// (drop the \"tls\" feature) to keep the build pure-Rust."
 	}
-	return fmt.Sprintf("Hint: run `rustup target add %s`, and make sure you're using a rustup toolchain (not Homebrew's rust).", target)
+	return fmt.Sprintf("Hint: the build runs in %s under --platform %s, targeting %s. "+
+		"Override the image with DRIFT_BUILD_IMAGE_RUST if it lacks that target.",
+		toolchainImage("rust"), targetPlatform(), target)
 }
