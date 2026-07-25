@@ -82,3 +82,60 @@ func TestLatestSemverTag(t *testing.T) {
 		}
 	}
 }
+
+func TestCLIInstallPath(t *testing.T) {
+	const base = "github.com/ondrift/cli"
+	cases := []struct {
+		name         string
+		target, from string
+		want         string
+	}{
+		// v1 has no major suffix — Go only requires one from v2 on. This is also
+		// the rollback path (`drift upgrade v1.8.1`), which a hardcoded "/v2"
+		// would break: a /v2 module path cannot serve a v1 tag.
+		{"v1 target", "v1.8.1", "v2.2.0", base + "/cmd/drift"},
+		{"v1 both", "v1.23.2", "v1.22.0", base + "/cmd/drift"},
+
+		// The bug this fixes: v2.2.0 must resolve through .../cli/v2/cmd/drift.
+		{"v2 target", "v2.2.0", "v1.23.2", base + "/v2/cmd/drift"},
+		{"v2 from v2", "v2.2.1", "v2.2.0", base + "/v2/cmd/drift"},
+
+		// Future majors need no code change — that's the point of deriving it.
+		{"v3 target", "v3.0.0", "v2.2.0", base + "/v3/cmd/drift"},
+		{"v10 target", "v10.1.0", "v2.2.0", base + "/v10/cmd/drift"},
+
+		// Non-version labels carry no major, so the running binary's major wins:
+		// @latest under a fixed module path means "newest release of THAT major".
+		{"latest falls back to current", "latest", "v2.2.0", base + "/v2/cmd/drift"},
+		{"latest on v1", "latest", "v1.23.2", base + "/cmd/drift"},
+		{"branch falls back", "main", "v2.0.0", base + "/v2/cmd/drift"},
+		{"commit sha falls back", "3104b18", "v2.1.0", base + "/v2/cmd/drift"},
+
+		// Unprefixed versions are accepted the same way normalizeVersion does.
+		{"no v prefix", "2.2.0", "", base + "/v2/cmd/drift"},
+
+		// Last resort with nothing to go on: the pre-v2 path.
+		{"both empty", "", "", base + "/cmd/drift"},
+	}
+	for _, c := range cases {
+		if got := CLIInstallPath(c.target, c.from); got != c.want {
+			t.Errorf("%s: CLIInstallPath(%q, %q) = %q, want %q", c.name, c.target, c.from, got, c.want)
+		}
+	}
+}
+
+func TestMajorVersion(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"v2.2.0", 2}, {"2.2.0", 2}, {"v1.0.0", 1}, {"v10.0.0", 10},
+		{"v2.2.0-rc1", 2}, // pre-release suffix ignored
+		{"latest", 0}, {"main", 0}, {"3104b18", 0}, {"", 0},
+	}
+	for _, c := range cases {
+		if got := MajorVersion(c.in); got != c.want {
+			t.Errorf("MajorVersion(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}

@@ -56,7 +56,10 @@ func runUpgrade(current, requested string) error {
 		return nil // already up to date (resolveLabel printed the note)
 	}
 
-	spec := common.CLIModulePath + "@" + label
+	// The module path carries the major version from v2 on, so it's derived from
+	// the version being installed — not a constant (see common.CLIInstallPath).
+	// `current` covers the "latest" label, when the target major isn't known yet.
+	spec := common.CLIInstallPath(label, current) + "@" + label
 	fmt.Printf("Upgrading the drift CLI → %s\n", label)
 	spinner := common.StartSpinner("  ", "go install "+spec)
 

@@ -23,8 +23,42 @@ import (
 // CLIRepo is the GitHub owner/repo the drift CLI is released from.
 const CLIRepo = "ondrift/cli"
 
-// CLIModulePath is the go-installable path of the drift binary.
-const CLIModulePath = "github.com/ondrift/cli/cmd/drift"
+// CLIModuleBase is the CLI's module path WITHOUT the major-version suffix.
+// Deliberately not the full install path: from v2 on, Go's semantic import
+// versioning puts the major version in the module path itself
+// (github.com/ondrift/cli/v2/...), so the go-installable path is a function of
+// the version being installed, not a constant. Build it with CLIInstallPath.
+const CLIModuleBase = "github.com/ondrift/cli"
+
+// MajorVersion returns the major component of a "vMAJOR.MINOR.PATCH" string, or
+// 0 when v carries no version at all (a branch name, a commit SHA, "latest").
+func MajorVersion(v string) int { return parseSemver(v)[0] }
+
+// CLIInstallPath returns the go-installable path of the drift binary for the
+// version about to be installed.
+//
+// This MUST track the major version: `go install github.com/ondrift/cli/cmd/drift@v2.2.0`
+// fails, because at v2.2.0 the module declares itself as ".../cli/v2" and Go
+// then can't match the requested path to any module — it falls through to
+// looking for a nested `cmd/drift/v2.2.0` subdirectory tag that doesn't exist.
+// Hardcoding "/v2" instead would just move the bug: it breaks again at v3, and
+// it breaks rollback (`drift upgrade v1.8.1`), since a /v2 module path cannot
+// serve a v1 tag.
+//
+// `from` is the version being upgraded *from*, used only when `target` carries
+// no major of its own ("latest", a branch, a commit) — under a fixed module
+// path, @latest resolves the newest release of that path's major, so staying on
+// the running binary's major is the correct reading.
+func CLIInstallPath(target, from string) string {
+	major := MajorVersion(target)
+	if major == 0 {
+		major = MajorVersion(from)
+	}
+	if major < 2 {
+		return CLIModuleBase + "/cmd/drift"
+	}
+	return CLIModuleBase + "/v" + strconv.Itoa(major) + "/cmd/drift"
+}
 
 // LatestRelease is the salient subset of the CLI's latest pushed version tag.
 type LatestRelease struct {
