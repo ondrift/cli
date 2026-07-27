@@ -336,14 +336,16 @@ func computeDiff(m *Manifest) (DiffResult, error) {
 
 	var (
 		liveCfg  *SliceConfig
+		liveTier string
 		liveCost int
 	)
 	if live != nil {
 		liveCfg = &live.Config
+		liveTier = live.Tier
 		liveCost = live.MonthlyCostCents
 	}
 
-	d := Diff(m.Slice.Name, manifestCfg, liveCfg, liveCost, wantedCost)
+	d := Diff(m.Slice.Name, manifestCfg, liveCfg, liveTier, liveCost, wantedCost)
 	d.WantedItems = wantedItems
 	return d, nil
 }
@@ -361,6 +363,14 @@ func confirm(autoYes bool, prompt string) bool {
 	ans = strings.ToLower(strings.TrimSpace(ans))
 	return ans == "y" || ans == "yes"
 }
+
+// WaitForSliceReady is waitForSliceReady for callers outside this package —
+// `drift slice create --from Driftfile`, which provisions a slice the user is
+// about to deploy into. Without it the very next `project deploy` races the
+// slice's own provisioning and fails with "runner unreachable", which is
+// indistinguishable from a platform fault (see HQ PLATFORM-CORE-OPERATOR-KG3TKF
+// for the same race on the grow path). Observed on alpha 2026-07-27.
+func WaitForSliceReady(name string) error { return waitForSliceReady(name) }
 
 // waitForSliceReady polls /ops/slice/status until all components
 // report Ready, or until 60s elapses. Returns the last error if any.

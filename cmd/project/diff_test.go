@@ -47,7 +47,7 @@ func TestDiff_OmittedEnvelopeKnobsDoNotShrink(t *testing.T) {
 		},
 	}
 
-	d := Diff("myapp", wanted, &live, 0, 0)
+	d := Diff("myapp", wanted, &live, "", 0, 0)
 	if d.Verdict != VerdictMatch {
 		t.Fatalf("verdict = %s, want match — omitted envelope knobs must not be treated as a shrink (shrinks: %+v)", d.Verdict, d.Shrinks)
 	}
@@ -63,7 +63,7 @@ func TestDiff_RealCountZeroIsStillAShrink(t *testing.T) {
 	live := SliceConfig{Backbone: BackboneLimits{Secrets: BackboneSecretsLimits{MaxCount: 2}}}
 	wanted := SliceConfig{} // 0 secrets declared
 
-	d := Diff("myapp", wanted, &live, 0, 0)
+	d := Diff("myapp", wanted, &live, "", 0, 0)
 	if d.Verdict != VerdictAbort {
 		t.Fatalf("verdict = %s, want abort — a real declared count of 0 is a genuine shrink", d.Verdict)
 	}
@@ -76,7 +76,7 @@ func TestDiff_ExplicitSmallerEnvelopeKnobIsStillAShrink(t *testing.T) {
 	live := SliceConfig{Atomic: AtomicLimits{MaxFunctionMemoryBytes: 32 * 1024 * 1024}}
 	wanted := SliceConfig{Atomic: AtomicLimits{MaxFunctionMemoryBytes: 16 * 1024 * 1024}}
 
-	d := Diff("myapp", wanted, &live, 0, 0)
+	d := Diff("myapp", wanted, &live, "", 0, 0)
 	if d.Verdict != VerdictAbort {
 		t.Fatalf("verdict = %s, want abort — an explicit smaller value is a real shrink, not an omission", d.Verdict)
 	}
@@ -88,7 +88,7 @@ func TestDiff_ExplicitLargerEnvelopeKnobIsStillAGrow(t *testing.T) {
 	live := SliceConfig{Atomic: AtomicLimits{MaxFunctionMemoryBytes: 32 * 1024 * 1024}}
 	wanted := SliceConfig{Atomic: AtomicLimits{MaxFunctionMemoryBytes: 128 * 1024 * 1024}}
 
-	d := Diff("myapp", wanted, &live, 0, 500)
+	d := Diff("myapp", wanted, &live, "", 0, 500)
 	if d.Verdict != VerdictGrow {
 		t.Fatalf("verdict = %s, want grow", d.Verdict)
 	}
@@ -107,7 +107,7 @@ func TestDiff_RemovedCollectionIsAShrink(t *testing.T) {
 		NoSQL: BackboneNoSQLLimits{Collections: map[string]int{}},
 	}}
 
-	d := Diff("myapp", wanted, &live, 0, 0)
+	d := Diff("myapp", wanted, &live, "", 0, 0)
 	if d.Verdict != VerdictAbort {
 		t.Fatalf("verdict = %s, want abort — removing a declared collection is a real shrink", d.Verdict)
 	}
@@ -127,7 +127,7 @@ func TestDiff_PerItemShrinkCaughtEvenIfAggregateGrows(t *testing.T) {
 		NoSQL: BackboneNoSQLLimits{Collections: map[string]int{"a": 40 * 1024 * 1024, "b": 100 * 1024 * 1024}},
 	}}
 
-	d := Diff("myapp", wanted, &live, 0, 0)
+	d := Diff("myapp", wanted, &live, "", 0, 0)
 	if d.Verdict != VerdictAbort {
 		t.Fatalf("verdict = %s, want abort — collection \"a\" shrank even though the total grew", d.Verdict)
 	}

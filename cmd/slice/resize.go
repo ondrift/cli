@@ -123,7 +123,7 @@ func resizeFromDriftfile(path string, allowDestructive, autoYes bool, billingMon
 		return fmt.Errorf("slice %q does not exist; create it first with `drift project deploy`", m.Slice.Name)
 	}
 
-	d := project.Diff(m.Slice.Name, manifestCfg, &live.Config, live.MonthlyCostCents, wantedCost)
+	d := project.Diff(m.Slice.Name, manifestCfg, &live.Config, live.Tier, live.MonthlyCostCents, wantedCost)
 	d.WantedItems = wantedItems
 
 	switch d.Verdict {

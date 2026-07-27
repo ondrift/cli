@@ -14,6 +14,20 @@ package project
 //
 // The load-bearing rule: deploy never shrinks a slice. The destructive
 // path has its own named verb.
+//
+// The one exception is the free tier, and it is not a weakening of that
+// rule — it is the rule not applying. A "hacker" slice is provisioned at
+// the FIXED free preset (platform src/common/tier: 5 functions, 1
+// scheduled job, 2 collections, 1 queue, 5 secrets, 50MB canvas)
+// regardless of what the client asked for, because accepting a
+// client-supplied config there would let anyone elevate their own free
+// quota. So the free slice's shape is a GRANT, not a purchase: the user
+// neither chose it nor paid for it, and cannot give any of it back. A
+// manifest that declares less than the grant is therefore not a shrink of
+// anything — it is simply a project that doesn't use the whole allowance,
+// and it resolves to Match, which sends no resize at all. Nothing is
+// changed, so nothing can be destroyed. Growing PAST the free ceiling is
+// still a Grow, and that is what takes a slice onto a paid shape.
 
 import (
 	"encoding/json"
@@ -21,6 +35,12 @@ import (
 	"sort"
 	"strings"
 )
+
+// TierHacker is the platform's id for the fixed free preset. It is the
+// only tier whose config the user does not choose — see the free-tier
+// note above and the operator's priceAndValidate, which discards a
+// client-supplied config for exactly this tier.
+const TierHacker = "hacker"
 
 // Verdict is the four-way classifier described above.
 type Verdict int
@@ -64,24 +84,33 @@ func (f FieldDelta) Delta() int { return f.Wanted - f.Live }
 // DiffResult is the structured output of Diff(). Render it with
 // RenderDiff to get the user-facing prompt block.
 type DiffResult struct {
-	Verdict         Verdict
-	SliceName       string
-	IsNewSlice      bool
-	Grows           []FieldDelta // fields the manifest wants larger than live
-	Shrinks         []FieldDelta // fields the manifest wants smaller than live (only set on Abort)
-	LiveCostCents   int          // monthly cost of the live slice (0 if Create)
-	WantedCostCents int          // monthly cost of the manifest's declared shape
-	WantedItems     []LineItem   // itemised breakdown backing WantedCostCents (server-computed)
+	Verdict    Verdict
+	SliceName  string
+	IsNewSlice bool
+	Grows      []FieldDelta // fields the manifest wants larger than live
+	Shrinks    []FieldDelta // fields the manifest wants smaller than live (only set on Abort)
+	// UnusedFreeGrant holds the dimensions where a free slice's fixed
+	// preset exceeds what the manifest declares. On any other tier these
+	// would be Shrinks; on the free grant they are spare allowance, kept
+	// here rather than discarded so the decision stays inspectable.
+	UnusedFreeGrant []FieldDelta
+	LiveCostCents   int        // monthly cost of the live slice (0 if Create)
+	WantedCostCents int        // monthly cost of the manifest's declared shape
+	WantedItems     []LineItem // itemised breakdown backing WantedCostCents (server-computed)
 }
 
 // Diff compares the manifest-derived SliceConfig against the live
 // SliceConfig and returns the verdict + per-field deltas. liveCfg
 // must be a pointer; nil means "the slice doesn't exist yet" → Create.
+// liveTier is the live slice's tier — TierHacker means the fixed free
+// grant, which changes how a smaller manifest is classified (see the
+// free-tier note at the top of this file); pass "" when there is no live
+// slice or the tier is unknown, which keeps the strict shrink gate.
 // Callers that have the server's itemised price breakdown (PriceConfig's
 // second return value) should set the result's WantedItems field
 // themselves afterward — Diff doesn't take it directly so existing callers
 // (and tests) that don't care about display don't need to change.
-func Diff(sliceName string, manifest SliceConfig, liveCfg *SliceConfig, liveCostCents, wantedCostCents int) DiffResult {
+func Diff(sliceName string, manifest SliceConfig, liveCfg *SliceConfig, liveTier string, liveCostCents, wantedCostCents int) DiffResult {
 	if liveCfg == nil {
 		// Create — every non-zero field in manifest is a grow.
 		grows := compareFields(SliceConfig{}, manifest, true)
@@ -105,6 +134,14 @@ func Diff(sliceName string, manifest SliceConfig, liveCfg *SliceConfig, liveCost
 		}
 	}
 
+	// The free grant is a ceiling, not a purchase. Declaring less than it
+	// is not a shrink of anything the user owns, and the resulting Match
+	// sends no resize, so the slice keeps its full free allowance.
+	var unusedGrant []FieldDelta
+	if liveTier == TierHacker {
+		unusedGrant, shrinks = shrinks, nil
+	}
+
 	verdict := VerdictMatch
 	switch {
 	case len(shrinks) > 0:
@@ -118,6 +155,7 @@ func Diff(sliceName string, manifest SliceConfig, liveCfg *SliceConfig, liveCost
 		SliceName:       sliceName,
 		Grows:           grows,
 		Shrinks:         shrinks,
+		UnusedFreeGrant: unusedGrant,
 		LiveCostCents:   liveCostCents,
 		WantedCostCents: wantedCostCents,
 	}

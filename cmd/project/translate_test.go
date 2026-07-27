@@ -131,7 +131,7 @@ func TestDiff_CreatePath(t *testing.T) {
 		Atomic:   AtomicLimits{MaxNumberOfFunctions: 5, MaxFunctionMemoryBytes: 64 * 1024 * 1024},
 		Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{MaxCollections: 2}},
 	}
-	d := Diff("hello", manifest, nil, 0, 0)
+	d := Diff("hello", manifest, nil, "", 0, 0)
 	if d.Verdict != VerdictCreate {
 		t.Errorf("verdict: got %s, want create", d.Verdict)
 	}
@@ -149,7 +149,7 @@ func TestDiff_MatchPath(t *testing.T) {
 	cfg := SliceConfig{
 		Atomic: AtomicLimits{MaxNumberOfFunctions: 5},
 	}
-	d := Diff("hello", cfg, &cfg, 1500, 1500)
+	d := Diff("hello", cfg, &cfg, "", 1500, 1500)
 	if d.Verdict != VerdictMatch {
 		t.Errorf("verdict: got %s, want match", d.Verdict)
 	}
@@ -163,7 +163,7 @@ func TestDiff_MatchPath(t *testing.T) {
 func TestDiff_GrowPath(t *testing.T) {
 	live := SliceConfig{Atomic: AtomicLimits{MaxNumberOfFunctions: 3}}
 	manifest := SliceConfig{Atomic: AtomicLimits{MaxNumberOfFunctions: 5}}
-	d := Diff("hello", manifest, &live, 1500, 3000)
+	d := Diff("hello", manifest, &live, "", 1500, 3000)
 	if d.Verdict != VerdictGrow {
 		t.Errorf("verdict: got %s, want grow", d.Verdict)
 	}
@@ -186,7 +186,7 @@ func TestDiff_AbortPath(t *testing.T) {
 		Atomic:   AtomicLimits{MaxNumberOfFunctions: 5},
 		Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{MaxCollections: 4}},
 	}
-	d := Diff("hello", manifest, &live, 3000, 1500)
+	d := Diff("hello", manifest, &live, "", 3000, 1500)
 	if d.Verdict != VerdictAbort {
 		t.Errorf("verdict: got %s, want abort", d.Verdict)
 	}
@@ -198,13 +198,13 @@ func TestDiff_AbortPath(t *testing.T) {
 // TestRenderDiff_FreeWording verifies the binary "This slice is free."
 // vs "€N/month" wording rule.
 func TestRenderDiff_FreeWording(t *testing.T) {
-	d := Diff("hello", SliceConfig{Atomic: AtomicLimits{MaxNumberOfFunctions: 1}}, nil, 0, 0)
+	d := Diff("hello", SliceConfig{Atomic: AtomicLimits{MaxNumberOfFunctions: 1}}, nil, "", 0, 0)
 	out := RenderDiff(d)
 	if !contains(out, "This slice is free.") {
 		t.Errorf("free slice: got %q, want 'This slice is free.'", out)
 	}
 
-	d2 := Diff("hello", SliceConfig{Atomic: AtomicLimits{MaxNumberOfFunctions: 50}}, nil, 0, 1500)
+	d2 := Diff("hello", SliceConfig{Atomic: AtomicLimits{MaxNumberOfFunctions: 50}}, nil, "", 0, 1500)
 	out2 := RenderDiff(d2)
 	if !contains(out2, "Cost: €15/month") {
 		t.Errorf("paid slice: want 'Cost: €15/month' in output, got: %s", out2)
@@ -216,7 +216,7 @@ func TestRenderDiff_FreeWording(t *testing.T) {
 func TestRenderDiff_FreeToPaidCrossing(t *testing.T) {
 	live := SliceConfig{Atomic: AtomicLimits{MaxNumberOfFunctions: 3}}
 	manifest := SliceConfig{Atomic: AtomicLimits{MaxNumberOfFunctions: 8}}
-	d := Diff("hello", manifest, &live, 0, 1500)
+	d := Diff("hello", manifest, &live, "", 0, 1500)
 	out := RenderDiff(d)
 	if !contains(out, "free → €15/mo") {
 		t.Errorf("expected 'free → €15/mo' in output, got: %s", out)
@@ -228,7 +228,7 @@ func TestRenderDiff_FreeToPaidCrossing(t *testing.T) {
 func TestRenderDiff_AbortMessage(t *testing.T) {
 	live := SliceConfig{Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{MaxCollections: 6}}}
 	manifest := SliceConfig{Backbone: BackboneLimits{NoSQL: BackboneNoSQLLimits{MaxCollections: 4}}}
-	d := Diff("hello", manifest, &live, 1500, 1000)
+	d := Diff("hello", manifest, &live, "", 1500, 1000)
 	out := RenderDiff(d)
 
 	for _, want := range []string{
