@@ -46,7 +46,7 @@ func TestParseDriftfile_RestaurantTemplate(t *testing.T) {
 	}
 
 	// backbone.queues — flat-list of strings
-	if len(m.Slice.Backbone.Queues) != 1 || m.Slice.Backbone.Queues[0] != "reservation-queue" {
+	if len(m.Slice.Backbone.Queues) != 1 || m.Slice.Backbone.Queues[0].Name != "reservation-queue" {
 		t.Errorf("backbone.queues = %+v, want [reservation-queue]", m.Slice.Backbone.Queues)
 	}
 
@@ -559,6 +559,80 @@ hooks:
 	}
 	if len(h.PostDeploy) != 1 || h.PostDeploy[0] != "./smoke.sh" {
 		t.Errorf("post_deploy = %+v", h.PostDeploy)
+	}
+}
+
+// #DRIFTFILE-R0TNSP — `queues:` was the one resource list that took bare
+// strings while every sibling (nosql, sql, blobs, canvas sites) took a
+// string-or-map. The spec's own forward-compatibility example shows the map
+// form, so the DOCUMENTED shape was the one that died — and it died with a raw
+// decoder message ("cannot unmarshal !!map into string") that names neither the
+// file nor the field.
+//
+// The map form must parse. `name` is the only key it carries: per-queue options
+// like max_receives are still unimplemented, and accepting a knob that does
+// nothing would be a worse lie than rejecting it.
+func TestParseDriftfile_QueueShorthandStringOrMap(t *testing.T) {
+	var queues []QueueEntry
+	if err := yaml.Unmarshal([]byte(`
+- reservation-queue
+- { name: email-nudges }
+`), &queues); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if len(queues) != 2 {
+		t.Fatalf("queues count = %d, want 2", len(queues))
+	}
+	if queues[0].Name != "reservation-queue" {
+		t.Errorf("queues[0] = %+v, want bare {Name: reservation-queue}", queues[0])
+	}
+	if queues[1].Name != "email-nudges" {
+		t.Errorf("queues[1] = %+v, want {Name: email-nudges}", queues[1])
+	}
+}
+
+// And the map form must survive a full ParseDriftfile — the shorthand expander
+// and the strict KnownFields re-decode both run there, and either could reject
+// a shape the standalone unmarshaler accepts.
+func TestParseDriftfile_QueueMapFormEndToEnd(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+name: queue-shapes
+backbone:
+  queues:
+    - reservation-queue
+    - { name: email-nudges }
+`)
+	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err != nil {
+		t.Fatalf("the spec's own queue example does not parse: %v", err)
+	}
+	if len(m.Slice.Backbone.Queues) != 2 {
+		t.Fatalf("queues = %+v, want 2 entries", m.Slice.Backbone.Queues)
+	}
+	if m.Slice.Backbone.Queues[1].Name != "email-nudges" {
+		t.Errorf("queues[1].name = %q, want email-nudges", m.Slice.Backbone.Queues[1].Name)
+	}
+}
+
+// A queue map carrying an unimplemented option must be REFUSED, not silently
+// dropped. Accepting `max_receives: 3` and ignoring it would tell the user
+// their redelivery cap is set when nothing enforces it — the exact failure
+// mode this card is about, one layer deeper.
+func TestParseDriftfile_QueueRejectsUnimplementedOption(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite(t, filepath.Join(tmp, "Driftfile"), `
+name: queue-shapes
+backbone:
+  queues:
+    - { name: email-nudges, max_receives: 3 }
+`)
+	_, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
+	if err == nil {
+		t.Fatal("max_receives was accepted; nothing implements it, so the manifest lied")
+	}
+	if !contains(err.Error(), "max_receives") {
+		t.Errorf("error %q does not name the offending key", err.Error())
 	}
 }
 

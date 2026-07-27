@@ -823,9 +823,9 @@ func applyBackbone(m *Manifest, out io.Writer) error {
 	}
 
 	for _, q := range b.Queues {
-		label := fmt.Sprintf("Queue: %s", q)
-		if err := queueInit(q); err != nil {
-			return fmt.Errorf("queue init %q failed: %w", q, err)
+		label := fmt.Sprintf("Queue: %s", q.Name)
+		if err := queueInit(q.Name); err != nil {
+			return fmt.Errorf("queue init %q failed: %w", q.Name, err)
 		}
 		fmt.Fprintf(out, "    %s %s\n", common.Check(), label)
 	}

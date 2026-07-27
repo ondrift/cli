@@ -19,7 +19,7 @@ func TestManifestToSliceConfig_Counts(t *testing.T) {
 			},
 			Backbone: BackboneSection{
 				NoSQL:               []NoSQLEntry{{Name: "x", Size: "10MB"}, {Name: "y", Size: "20MB"}},
-				Queues:              []string{"q1", "q2", "q3"},
+				Queues:              []QueueEntry{{Name: "q1"}, {Name: "q2"}, {Name: "q3"}},
 				Secrets:             map[string]string{"A": "1", "B": "2"},
 				RealtimeConnections: 200,
 			},

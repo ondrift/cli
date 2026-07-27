@@ -212,7 +212,7 @@ type BackboneSection struct {
 	// 50-connection blocks; 0 (omitted) means realtime is off for this slice.
 	RealtimeConnections int                   `yaml:"realtime_connections"`
 	NoSQL               []NoSQLEntry          `yaml:"nosql"`
-	Queues              []string              `yaml:"queues"`
+	Queues              []QueueEntry          `yaml:"queues"`
 	Cache               map[string]CacheEntry `yaml:"cache"`
 	Secrets             map[string]string     `yaml:"secrets"`
 
@@ -259,6 +259,20 @@ type NoSQLEntry struct {
 type BlobEntry struct {
 	Name string `yaml:"name"`
 	Size string `yaml:"size"`
+}
+
+// QueueEntry declares one queue. `Name` is the only field, and that is the
+// whole point of the type: `queues:` used to be a []string while every sibling
+// resource list took a string-or-map, so the map form the spec advertises as
+// forward-compatible failed with a raw decoder error (#DRIFTFILE-R0TNSP).
+//
+// Queues have no size — they are FIFOs bounded by backbone.queue_max_depth,
+// slice-wide — so unlike nosql/sql/blobs there is nothing a long form needs to
+// carry yet. It exists so the promised per-queue options (visibility timeout,
+// max-receives) can be ADDED without breaking a single existing manifest, and
+// until they are implemented an unknown key is refused rather than ignored.
+type QueueEntry struct {
+	Name string `yaml:"name"`
 }
 
 // CacheEntry is the long-form expansion. Short-form `<key>: <path>`
@@ -807,6 +821,37 @@ func (bk *BlobEntry) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// UnmarshalYAML accepts either a bare-string (queue name) or a map (the long
+// form, whose only key today is `name`). Mirrors NoSQLEntry/SQLEntry/BlobEntry
+// so every resource list in `backbone:` now takes the same two shapes.
+//
+// Unlike its siblings this one rejects unknown keys explicitly. The siblings
+// can lean on ParseDriftfile's strict KnownFields re-decode, but that strictness
+// does not reach INSIDE a custom unmarshaler — `node.Decode` builds a fresh,
+// lenient decoder — so without this check `max_receives: 3` would parse, be
+// dropped on the floor, and leave the user believing a redelivery cap is in
+// force. Refusing a knob nothing implements is the honest half of promising it
+// can exist later.
+func (q *QueueEntry) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		q.Name = node.Value
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if key := node.Content[i].Value; key != "name" {
+			return fmt.Errorf("backbone.queues: %q is not a supported queue option "+
+				"(only `name` is; per-queue options are not implemented yet)", key)
+		}
+	}
+	type raw QueueEntry
+	var r raw
+	if err := node.Decode(&r); err != nil {
+		return err
+	}
+	*q = QueueEntry(r)
+	return nil
+}
+
 // UnmarshalYAML accepts either a bare-string (canvas directory) or a
 // map (the long form with dir/route).
 func (c *CanvasEntry) UnmarshalYAML(node *yaml.Node) error {
@@ -1039,8 +1084,8 @@ func validate(m *Manifest) ParseErrors {
 
 	// queues
 	for i, q := range b.Queues {
-		if !nameRe.MatchString(q) {
-			errs = append(errs, fmt.Sprintf("backbone.queues[%d]: name %q is invalid", i, q))
+		if !nameRe.MatchString(q.Name) {
+			errs = append(errs, fmt.Sprintf("backbone.queues[%d]: name %q is invalid", i, q.Name))
 		}
 	}
 
