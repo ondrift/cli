@@ -263,6 +263,9 @@ func ParseAllAtomicMetadata(filename string) ([]AtomicMeta, error) {
 	lines := strings.Split(string(data), "\n")
 
 	var out []AtomicMeta
+	// Which annotation lines were actually consumed by a callable — anything
+	// left over is an orphan, checked after the scan.
+	usedAnno := make(map[int]bool)
 	for i, line := range lines {
 		m := rx.FindStringSubmatch(line)
 		if len(m) < 2 {
@@ -302,9 +305,46 @@ func ParseAllAtomicMetadata(filename string) ([]AtomicMeta, error) {
 		}
 		meta.SentinelName = sentinel
 		meta.Language = lang
+		usedAnno[j] = true
 		out = append(out, meta)
 	}
+
+	// An `@atomic` that matched no callable is an ERROR, not a shrug.
+	//
+	// It used to be silent, and the silence was expensive: the file parsed as
+	// zero functions, so `project deploy` went on to compare a slice holding N
+	// functions against a manifest declaring 0 and refused with
+	// "atomic.functions 2 (current) > 0 (declared)" — a message about slice SIZE
+	// that says nothing about the real cause. The only way to find it was to
+	// read this file.
+	//
+	// The common way to hit it is following a doc example that puts the
+	// annotation at the top of the file above an import, rather than directly
+	// above a named callable.
+	for i, line := range lines {
+		if usedAnno[i] || !commentAtomicRe.MatchString(line) {
+			continue
+		}
+		return nil, fmt.Errorf(
+			"%s:%d: this @atomic annotation is not directly above a function, so it would be ignored and the function never deployed.\n"+
+				"       In %s a decorated callable looks like:\n         %s\n"+
+				"       Put the annotation on the line immediately above it (blank lines are fine, other code is not).",
+			filepath.Base(filename), i+1, lang, callableShape[lang])
+	}
 	return out, nil
+}
+
+// callableShape is what "directly above a callable" actually means per
+// language, quoted back at the user in the orphan error above. Naming the
+// shape is the whole point: "not above a function" is not actionable when the
+// annotation *looks* like it is above one.
+var callableShape = map[string]string{
+	"go":     "func MyFunction(...)          // exported: capital first letter",
+	"python": "def my_function(...):",
+	"node":   "function myFunction(...) {    // a NAMED function, not an arrow assigned to a const",
+	"ruby":   "def my_function(...)",
+	"php":    "function myFunction(...) {",
+	"rust":   "pub fn my_function(...)       // must be pub",
 }
 
 // ParseAllAtomicMetadataFromDir walks every source file in dir, runs

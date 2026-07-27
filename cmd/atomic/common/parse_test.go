@@ -406,3 +406,101 @@ func GetC(r drift.Request) {}
 		t.Fatalf("got %d, want 3", len(metas))
 	}
 }
+
+// ─── Orphaned @atomic annotations ──────────────────────────────────────────
+//
+// An annotation that matched no callable used to be dropped in silence, and the
+// silence was expensive. The file parsed as ZERO functions, so `project deploy`
+// went on to compare a slice holding N functions against a manifest declaring 0
+// and refused with "atomic.functions 2 (current) > 0 (declared)" — a message
+// about slice SIZE that says nothing about the real cause. Finding it meant
+// reading the parser.
+//
+// The common way in is following a doc example that puts the annotation at the
+// top of the file above an import rather than directly above a callable — which
+// is exactly what the Node SDK's own documentation showed.
+
+func TestParseAll_OrphanedAnnotationIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	// Verbatim the shape the SDK docs used: annotation on top, arrow function
+	// handed to drift.run, no named function anywhere.
+	src := `// @atomic http=get:events auth=none
+const drift = require("@ondrift/sdk");
+drift.run(async (req) => ({ status: 200 }));
+`
+	if err := os.WriteFile(filepath.Join(dir, "events.js"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ParseAllAtomicMetadata(filepath.Join(dir, "events.js"))
+	if err == nil {
+		t.Fatal("an @atomic above no callable must be an error — the silence is the bug")
+	}
+	for _, want := range []string{"events.js:1", "not directly above a function", "function myFunction"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error must name the file:line and the shape expected; %q missing from:\n%v", want, err)
+		}
+	}
+}
+
+func TestParseAll_OrphanNamesTheRightLine(t *testing.T) {
+	dir := t.TempDir()
+	src := `package main
+
+// @atomic http=post:good auth=none
+func PostGood(req Request) Response { return Response{} }
+
+// @atomic http=post:orphan auth=none
+var notAFunction = 1
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ParseAllAtomicMetadata(filepath.Join(dir, "main.go"))
+	if err == nil {
+		t.Fatal("the second annotation is an orphan and must be reported")
+	}
+	if !strings.Contains(err.Error(), "main.go:6") {
+		t.Errorf("must name line 6 (the orphan), got: %v", err)
+	}
+}
+
+// A well-formed file must stay silent — an over-eager guard that fires on valid
+// code would be worse than the silence it replaces.
+func TestParseAll_ValidFilesStillParseCleanly(t *testing.T) {
+	cases := map[string]string{
+		"main.go":   "package main\n\n// @atomic http=get:a auth=none\nfunc GetA(r Request) Response { return Response{} }\n",
+		"app.py":    "# @atomic http=get:b auth=none\ndef get_b(body, req):\n    return 200, 'OK', {}\n",
+		"h.js":      "const drift = require('@ondrift/sdk');\n\n// @atomic http=get:c auth=none\nfunction getC(req) { return [200, 'OK', {}]; }\n\nmodule.exports = { getC };\n",
+		"h.rb":      "# @atomic http=get:d auth=none\ndef get_d(body, req)\n  [200, 'OK', {}]\nend\n",
+		"index.php": "<?php\n// @atomic http=get:e auth=none\nfunction getE($body, $req) { return [200, 'OK', []]; }\n",
+	}
+	for name, src := range cases {
+		dir := t.TempDir()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		metas, err := ParseAllAtomicMetadata(path)
+		if err != nil {
+			t.Errorf("%s: valid source must parse cleanly, got %v", name, err)
+			continue
+		}
+		if len(metas) != 1 {
+			t.Errorf("%s: expected 1 function, got %d", name, len(metas))
+		}
+	}
+}
+
+// A comment that merely mentions @atomic in prose is not an annotation — the
+// regex requires the annotation body, so a sentence about it must not trip the
+// guard.
+func TestParseAll_ProseMentionIsNotAnOrphan(t *testing.T) {
+	dir := t.TempDir()
+	src := "package main\n\n// Every handler needs an @atomic\n// decorator above it.\nfunc helper() {}\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseAllAtomicMetadata(filepath.Join(dir, "main.go")); err != nil {
+		t.Errorf("prose mentioning @atomic must not be treated as an annotation: %v", err)
+	}
+}
