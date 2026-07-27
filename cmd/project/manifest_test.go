@@ -280,10 +280,15 @@ atomic:
 canvas: ./canvas
 `)
 	mustMkdir(t, filepath.Join(tmp, "canvas"))
+	// The annotation must sit directly above a decorated callable — an
+	// annotation floating above `package main` is an orphan the parser
+	// rejects outright (cmd/atomic/common/parse.go), precisely so it can't
+	// be silently ignored and resurface later as a confusing slice-size
+	// refusal. These fixtures carry a real exported func for that reason.
 	mustWrite(t, filepath.Join(tmp, "atomic", "items-get", "main.go"),
-		"// @atomic http=get:items auth=none\npackage main\n")
+		"package main\n\n// @atomic http=get:items auth=none\nfunc GetItems(req any) {}\n")
 	mustWrite(t, filepath.Join(tmp, "atomic", "items-post", "main.go"),
-		"// @atomic http=post:items auth=none\npackage main\n")
+		"package main\n\n// @atomic http=post:items auth=none\nfunc PostItems(req any) {}\n")
 
 	m, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
 	if err != nil {
@@ -297,7 +302,7 @@ canvas: ./canvas
 
 	// Two functions with the SAME method+path genuinely collide.
 	mustWrite(t, filepath.Join(tmp, "atomic", "items-get", "main.go"),
-		"// @atomic http=post:items auth=none\npackage main\n") // now also post:items
+		"package main\n\n// @atomic http=post:items auth=none\nfunc PostItems(req any) {}\n") // now also post:items
 	m2, err := ParseDriftfile(filepath.Join(tmp, "Driftfile"))
 	if err != nil {
 		t.Fatalf("ParseDriftfile failed: %v", err)
