@@ -154,6 +154,13 @@ func installPythonDeps(absFolder, stageDir string) error {
 	if werr := os.WriteFile(filepath.Join(stageDir, "requirements.txt"), data, 0o644); werr != nil { // #nosec G306
 		return fmt.Errorf("write staged requirements.txt: %w", werr)
 	}
+	// Nothing but the SDK declared → copy it into vendor/ and skip the
+	// container entirely (see sdkvendor.go).
+	if done, verr := tryVendorSDKOnly("python", absFolder, stageDir); verr != nil {
+		return verr
+	} else if done {
+		return nil
+	}
 	// Mirror build_python.go: install the manifest verbatim into vendor/. No
 	// --platform/--only-binary — a git-source dep (the SDK) isn't a prebuilt wheel.
 	if out, err := runToolchain(toolchainCmd{lang: "python", dir: stageDir, name: "pip3", args: []string{"install", "-t", "vendor", "-r", "requirements.txt", "--quiet"}}); err != nil {
@@ -174,6 +181,11 @@ func installNodeDeps(absFolder, stageDir string) error {
 	}
 	if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "package-lock.json")); lerr == nil { // #nosec G304
 		_ = os.WriteFile(filepath.Join(stageDir, "package-lock.json"), lockData, 0o644) // #nosec G306
+	}
+	if done, verr := tryVendorSDKOnly("node", absFolder, stageDir); verr != nil {
+		return verr
+	} else if done {
+		return nil
 	}
 	// --os/--cpu name the SLICE's platform, not this machine's, so npm resolves
 	// the right optionalDependencies (sharp, argon2, …) for the runner.
@@ -199,6 +211,11 @@ func installRubyDeps(absFolder, stageDir string) error {
 	}
 	if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "Gemfile.lock")); lerr == nil { // #nosec G304
 		_ = os.WriteFile(filepath.Join(stageDir, "Gemfile.lock"), lockData, 0o644) // #nosec G306
+	}
+	if done, verr := tryVendorSDKOnly("ruby", absFolder, stageDir); verr != nil {
+		return verr
+	} else if done {
+		return nil
 	}
 	// --standalone emits vendor/bundle/bundler/setup.rb which the wrapper loads
 	// without requiring bundler at runtime. BUNDLE_PATH/WITHOUT go through env so
@@ -232,6 +249,11 @@ func installPHPDeps(absFolder, stageDir string) error {
 	}
 	if lockData, lerr := os.ReadFile(filepath.Join(absFolder, "composer.lock")); lerr == nil { // #nosec G304
 		_ = os.WriteFile(filepath.Join(stageDir, "composer.lock"), lockData, 0o644) // #nosec G306
+	}
+	if done, verr := tryVendorSDKOnly("php", absFolder, stageDir); verr != nil {
+		return verr
+	} else if done {
+		return nil
 	}
 	if out, err := runToolchain(toolchainCmd{lang: "php", dir: stageDir, name: "composer", args: []string{"install", "--no-dev", "--ignore-platform-reqs", "--quiet", "--no-interaction"}}); err != nil {
 		return fmt.Errorf("composer install error: %w\n%s", err, string(out))
