@@ -51,17 +51,56 @@ func VerifySDKManifest(dir, language string) error {
 	if !ok {
 		return nil
 	}
-	if _, err := os.Stat(filepath.Join(dir, spec.manifest)); err == nil {
-		return nil // manifest present
-	}
 	if !sourceUsesSDK(dir, spec) {
 		return nil // function doesn't touch the SDK — a manifest isn't required
 	}
+
+	manifestPath := filepath.Join(dir, spec.manifest)
+	data, err := os.ReadFile(manifestPath) // #nosec G304 -- controlled function dir (CLI-validated path)
+	if err != nil {
+		return fmt.Errorf(
+			"this function uses the Drift SDK but has no %s to declare it.\n"+
+				"Create %s with:\n\n  %s\n\n"+
+				"then deploy again (or run `drift atomic fetch` to resolve it locally first).",
+			spec.manifest, spec.manifest, spec.declaration)
+	}
+
+	// Present is not the same as DECLARING it. This checked only that the file
+	// existed, so a package.json carrying `"dependencies": {}` sailed through
+	// and the failure moved from deploy time — one clear message — to the first
+	// request, as a 500 with a Node stack trace in it:
+	//
+	//   Error: Cannot find module '@ondrift/sdk'
+	//
+	// The string the manifest has to contain is the same needle already used to
+	// detect SDK usage in the source, so there is nothing new to keep in step.
+	for _, n := range spec.manifestNeedles() {
+		if strings.Contains(string(data), n) {
+			return nil
+		}
+	}
 	return fmt.Errorf(
-		"this function uses the Drift SDK but has no %s to declare it.\n"+
-			"Create %s with:\n\n  %s\n\n"+
-			"then deploy again (or run `drift atomic fetch` to resolve it locally first).",
+		"this function uses the Drift SDK, and %s exists but does not declare it — "+
+			"so the dependency install resolves nothing and the function fails at its first invocation "+
+			"with \"cannot find module\".\nAdd to %s:\n\n  %s\n",
 		spec.manifest, spec.manifest, spec.declaration)
+}
+
+// manifestNeedles is what the MANIFEST must mention to count as declaring the
+// SDK. Usually the same token looked for in source; Ruby and PHP differ because
+// what you write in source ("require 'drift'", "Drift\") is not what you write
+// in the Gemfile/composer.json.
+func (s sdkManifestSpec) manifestNeedles() []string {
+	switch s.manifest {
+	case "Gemfile":
+		return []string{"drift-sdk"}
+	case "composer.json":
+		return []string{"ondrift/sdk"}
+	case "requirements.txt":
+		return []string{"drift-sdk", "ondrift/sdk"}
+	default:
+		return s.needles
+	}
 }
 
 func sourceUsesSDK(dir string, spec sdkManifestSpec) bool {
