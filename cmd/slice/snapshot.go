@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,12 +16,32 @@ import (
 )
 
 type snapshotResponse struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Size      int64  `json:"size"`
-	Status    string `json:"status"`
-	Error     string `json:"error,omitempty"`
-	CreatedAt string `json:"created_at"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Size   int64  `json:"size"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+	// Partial and Components are recorded when a snapshot is taken: some
+	// component failed to capture, so the archive is real and restorable but
+	// INCOMPLETE. Decoding them is what lets `list` say so BEFORE you pick an
+	// archive to restore — without it the only difference between a complete
+	// backup and one missing every secret is invisible until after the restore.
+	Partial    bool              `json:"partial,omitempty"`
+	Components map[string]string `json:"components,omitempty"`
+	CreatedAt  string            `json:"created_at"`
+}
+
+// missingComponents names the components that failed to capture, sorted so the
+// output is stable between runs.
+func (s snapshotResponse) missingComponents() []string {
+	var out []string
+	for name, outcome := range s.Components {
+		if outcome != "ok" {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func getSnapshotCmd() *cobra.Command {
@@ -150,14 +171,29 @@ func getSnapshotListCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Printf("%-26s  %-20s  %-10s  %-8s  %s\n", "ID", "NAME", "SIZE", "STATUS", "CREATED")
+			fmt.Printf("%-26s  %-20s  %-10s  %-9s  %s\n", "ID", "NAME", "SIZE", "STATUS", "CREATED")
+			partials := 0
 			for _, s := range snapshots {
 				created := ""
 				if t, err := time.Parse(time.RFC3339Nano, s.CreatedAt); err == nil {
 					created = t.Format("2006-01-02 15:04")
 				}
-				fmt.Printf("%-26s  %-20s  %-10s  %-8s  %s\n",
-					s.ID, truncate(s.Name, 20), formatSize(s.Size), s.Status, created)
+				// A partial archive is still worth keeping and restoring — it just
+				// must not be mistaken for a complete one, which is exactly what
+				// this list did while it showed only `status`.
+				status := s.Status
+				if s.Partial {
+					status = s.Status + "*"
+					partials++
+				}
+				fmt.Printf("%-26s  %-20s  %-10s  %-9s  %s\n",
+					s.ID, truncate(s.Name, 20), formatSize(s.Size), status, created)
+				if missing := s.missingComponents(); len(missing) > 0 {
+					fmt.Printf("%-26s  %s\n", "", common.Hint("incomplete — did not capture: "+strings.Join(missing, ", ")))
+				}
+			}
+			if partials > 0 {
+				fmt.Printf("\n%s\n", common.Hint("* incomplete snapshot — some data was not captured; restoring one cannot bring back what is missing."))
 			}
 			return nil
 		},
@@ -320,6 +356,7 @@ func getSnapshotRestoreCmd() *cobra.Command {
 					NoSQLCollections int `json:"nosql_collections"`
 					Blobs            int `json:"blobs"`
 					Queues           int `json:"queues"`
+					SQLDatabases     int `json:"sql_databases"`
 					Functions        int `json:"functions"`
 					Canvas           int `json:"canvas"`
 					VaultEntries     int `json:"vault_entries"`
@@ -337,6 +374,7 @@ func getSnapshotRestoreCmd() *cobra.Command {
 			fmt.Printf("  NoSQL:       %d collections\n", r.NoSQLCollections)
 			fmt.Printf("  Blobs:       %d\n", r.Blobs)
 			fmt.Printf("  Queues:      %d\n", r.Queues)
+			fmt.Printf("  SQL:         %d databases\n", r.SQLDatabases)
 			fmt.Printf("  Vault:       %d entries\n", r.VaultEntries)
 			fmt.Printf("  Link:        %d identities\n", r.LinkIdentities)
 			fmt.Printf("  Pocket:      %d items\n", r.PocketItems)
