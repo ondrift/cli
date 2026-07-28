@@ -15,6 +15,7 @@ import (
 	project "github.com/ondrift/cli/v2/cmd/project"
 	slice "github.com/ondrift/cli/v2/cmd/slice"
 	upgrade "github.com/ondrift/cli/v2/cmd/upgrade"
+	"github.com/ondrift/cli/v2/common"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -23,13 +24,23 @@ import (
 // version is set at build time via:
 //
 //	go build -ldflags "-X main.version=v1.0.0"
-var version = "v2.7.2"
+var version = "v2.8.0"
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:           "drift",
-		Short:         "Drift is a minimalist cloud hosting service.",
-		Version:       version,
+		Use:     "drift",
+		Short:   "Drift is a minimalist cloud hosting service.",
+		Version: version,
+		// Two numbers, because they move independently. The CLI version is
+		// this binary; the Driftfile version is the manifest format it
+		// implements, which the platform serves and can be ahead of. Reporting
+		// only the first makes "why won't my Driftfile deploy" unanswerable
+		// without guesswork.
+		//
+		// Deliberately no network call: `--version` is what you run when
+		// something is already wrong, and it must answer instantly and offline.
+		// The comparison against what the platform serves happens where it is
+		// actionable — at deploy and lint.
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
@@ -42,6 +53,9 @@ func main() {
 			return portal.Run(version, nil)
 		},
 	}
+
+	rootCmd.SetVersionTemplate(fmt.Sprintf(
+		"drift %s\ndriftfile schema %s\n", version, common.DriftfileSchemaVersionOrNone()))
 
 	rootCmd.AddGroup(&cobra.Group{
 		ID:    "services",

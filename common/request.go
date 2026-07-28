@@ -98,6 +98,17 @@ func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reade
 		return httpClient.Do(req)
 	}
 
+	// First contact with the platform in this invocation also refreshes this
+	// machine's copy of the Driftfile format. It rides along here rather than
+	// living in `project deploy` because the format should be current whenever
+	// the CLI has spoken to the platform AT ALL — a user who logs in today and
+	// deploys on a plane tomorrow should be deploying against today's format,
+	// not the one from whenever they last ran a project command.
+	//
+	// Bounded to once per process, best-effort, and never able to fail the
+	// caller's actual request.
+	RefreshDriftfileSchema()
+
 	resp, err := send()
 	if err != nil {
 		return nil, err
