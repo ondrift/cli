@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -107,8 +108,14 @@ func doRequestWithHeaders(ctx context.Context, method, url string, body io.Reade
 	}
 	resp.Body.Close() // #nosec G104 -- discarded return is intentional and audited; the call's failure does not affect downstream correctness in this context.
 
-	// Attempt token refresh.
+	// Attempt token refresh. A 401 here is ambiguous on its own — it can mean
+	// the access token simply aged out (refresh fixes it, invisibly) or that
+	// the platform is unavailable and cannot say. Only the refresh's OWN
+	// failure mode tells them apart, so it decides the message.
 	if err := RefreshAccessToken(); err != nil {
+		if errors.Is(err, ErrPlatformUnavailable) {
+			return nil, errors.New(MaintenanceMessage)
+		}
 		return nil, fmt.Errorf("session expired — run 'drift account login' to re-authenticate")
 	}
 
@@ -135,11 +142,28 @@ func RefreshAccessToken() error {
 
 	resp, err := httpClient.Post(APIBaseURL+"/refresh", "application/json", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("refresh request failed: %w", err)
+		// Never reached the platform at all — that is unavailability, not a
+		// verdict on the token.
+		return fmt.Errorf("%w: %w", ErrPlatformUnavailable, err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	// A refresh can fail two ways that look identical to the caller and are
+	// opposite in meaning. REJECTED (401/403) means the refresh token is no
+	// longer good and the user really must log in again. UNAVAILABLE (5xx)
+	// means the platform could not answer — the token may be perfectly valid
+	// and nobody knows yet.
+	//
+	// Collapsing them is what produced the worst message this CLI has shipped:
+	// during a store outage every command said "run 'drift account login' to
+	// re-authenticate", and following that advice logged the user out of a
+	// platform that could not log them back in.
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("%w (refresh returned %d)", ErrSessionRejected, resp.StatusCode)
+	case resp.StatusCode >= 500:
+		return fmt.Errorf("%w (refresh returned %d)", ErrPlatformUnavailable, resp.StatusCode)
+	case resp.StatusCode != http.StatusOK:
 		return fmt.Errorf("refresh returned %d", resp.StatusCode)
 	}
 

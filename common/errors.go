@@ -56,6 +56,33 @@ type APIError struct {
 	Raw string
 }
 
+// ErrPlatformUnavailable and ErrSessionRejected split the two ways a token
+// refresh can fail. They are opposite in meaning and were indistinguishable to
+// callers, which is how an outage came to advise logging out.
+var (
+	// ErrPlatformUnavailable — the platform could not answer. The session may
+	// be perfectly valid; nobody knows yet. Wait.
+	ErrPlatformUnavailable = errors.New("drift is temporarily unavailable")
+	// ErrSessionRejected — the platform answered, and said no. Log in again.
+	ErrSessionRejected = errors.New("session rejected")
+)
+
+// MaintenanceMessage is what a user sees when Drift is temporarily
+// unavailable. One string, used by every path that can conclude it, so the
+// platform cannot say two different things about the same condition.
+//
+// It says three things on purpose. That Drift is unavailable, not broken —
+// so the next move is to wait. That the user's login is FINE, because the
+// path that produced this used to advise re-authenticating, which was worse
+// than useless: auth needs the same platform, so a user who followed it
+// logged out and could not get back in, turning a wait into a lockout. And
+// nothing whatsoever about which component is unavailable — a database, a
+// rollout and a chart apply are all the same event from outside, and naming
+// the internals leaks the architecture without helping anyone
+// (philosophy.md: "No Kubernetes leakage").
+const MaintenanceMessage = "Drift is temporarily unavailable — most likely brief maintenance. " +
+	"Your login is still valid; nothing to do but try again in a few minutes."
+
 func (e *APIError) Error() string {
 	lead := "Something went wrong"
 	if e.Op != "" {
@@ -105,6 +132,17 @@ func (e *APIError) Error() string {
 			return fmt.Sprintf("%s: %s (HTTP %d).", lead, e.Raw, e.Status)
 		}
 		return fmt.Sprintf("%s: request was rejected (HTTP %d).", lead, e.Status)
+
+	// 502/503/504 are the platform being UNAVAILABLE rather than broken —
+	// a maintenance window, a rolling restart, a dependency being upgraded.
+	// Told apart from a generic 500 because the user's next move differs: wait,
+	// rather than report it. Deliberately says nothing about WHICH component is
+	// unavailable; "the database is down" is our problem to know and theirs to
+	// be spared (philosophy.md: no infrastructure leakage).
+	case e.Status == http.StatusBadGateway ||
+		e.Status == http.StatusServiceUnavailable ||
+		e.Status == http.StatusGatewayTimeout:
+		return lead + ": " + MaintenanceMessage
 
 	case e.Status >= 500:
 		if e.Detail != "" {

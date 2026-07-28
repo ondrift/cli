@@ -31,7 +31,12 @@ func TestAPIError_StatusMessages(t *testing.T) {
 		{"400 no detail no raw", APIError{Op: "deploy", Status: 400}, "rejected"},
 		{"500 with detail", APIError{Op: "deploy", Status: 500, Detail: "db down"}, "db down"},
 		{"500 no detail", APIError{Op: "deploy", Status: 500}, "having trouble"},
-		{"503", APIError{Op: "deploy", Status: 503, Detail: "overloaded"}, "overloaded"},
+		// 503 deliberately DISCARDS the server's detail rather than echoing it.
+		// This case used to assert the opposite. A 5xx detail is written for an
+		// operator ("overloaded", "db down") and reaches a user who can do
+		// nothing with it except learn our architecture; unavailability is the
+		// one status where the honest message is the same every time.
+		{"503 ignores the server detail", APIError{Op: "deploy", Status: 503, Detail: "db down"}, "temporarily unavailable"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -182,5 +187,46 @@ func TestTransportError_SessionExpired(t *testing.T) {
 	err := TransportError("list slices", errors.New("session expired — run drift account login"))
 	if !strings.Contains(err.Error(), "run drift account login") {
 		t.Fatalf("msg: %q", err.Error())
+	}
+}
+
+// TestAPIError_UnavailableIsNotABrokenPlatform — 502/503/504 mean Drift cannot
+// answer right now, which is a different user action (wait) from a 500 (report
+// it). The message must also not name the component: a database, a rollout and
+// a chart apply are the same event from outside.
+func TestAPIError_UnavailableIsNotABrokenPlatform(t *testing.T) {
+	for _, code := range []int{502, 503, 504} {
+		got := (&APIError{Status: code, Op: "list slices"}).Error()
+		if !strings.Contains(got, "temporarily unavailable") {
+			t.Errorf("HTTP %d: %q should say the platform is temporarily unavailable", code, got)
+		}
+		if !strings.Contains(got, "login is still valid") {
+			t.Errorf("HTTP %d: %q must reassure the user their session is fine", code, got)
+		}
+		for _, leak := range []string{"database", "mongo", "Mongo", "kubernetes", "pod"} {
+			if strings.Contains(got, leak) {
+				t.Errorf("HTTP %d: %q leaks infrastructure detail (%q)", code, got, leak)
+			}
+		}
+	}
+}
+
+// TestAPIError_RealUnauthorizedStillSaysReauthenticate is the control. The fix
+// must not soften a genuine credential rejection into "try again later", or a
+// user with a truly dead session waits forever for nothing to change.
+func TestAPIError_RealUnauthorizedStillSaysReauthenticate(t *testing.T) {
+	got := (&APIError{Status: 401, Op: "list slices"}).Error()
+	if !strings.Contains(got, "drift account login") {
+		t.Errorf("a real 401 must still tell the user to log in, got %q", got)
+	}
+}
+
+// TestMaintenanceMessage_NeverAdvisesLoggingOut is the whole point. The message
+// this replaced told users to re-authenticate during an outage — and auth needs
+// the same platform, so following it turned a wait into a lockout.
+func TestMaintenanceMessage_NeverAdvisesLoggingOut(t *testing.T) {
+	if strings.Contains(MaintenanceMessage, "account login") ||
+		strings.Contains(MaintenanceMessage, "re-authenticate") {
+		t.Fatalf("the maintenance message must never advise logging out: %q", MaintenanceMessage)
 	}
 }
