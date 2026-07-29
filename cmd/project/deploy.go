@@ -310,7 +310,31 @@ func reconcileSlice(m *Manifest, autoYes bool, billingMonths int) error {
 			return err
 		}
 		fmt.Printf("\n  Growing slice %q...\n", m.Slice.Name)
-		return ResizeSlice(m.Slice.Name, manifestCfg, billingMonths)
+		if err := ResizeSlice(m.Slice.Name, manifestCfg, billingMonths); err != nil {
+			return err
+		}
+		// Wait before deploying functions into it (#PLATFORM-CORE-OPERATOR-KG3TKF).
+		//
+		// A resize no longer recreates the pod for its own sake — the platform
+		// stopped stamping a fresh pod-template annotation on every apply, and
+		// pushes new tier limits into the running slice instead. So the common
+		// grows (rate limit, function COUNT, backbone.secrets) leave the runner
+		// alone entirely and this returns on its first poll.
+		//
+		// One grow still replaces the pod: a change to function_memory, which is
+		// a term of the container's memory limit and therefore genuinely changes
+		// the rendered spec. Without this wait, that case does what it always did
+		// — deploys functions into a runner that is still coming up and fails with
+		// "the platform is having trouble — runner unreachable", which reads as a
+		// platform fault and is really our own ordering.
+		// Phrased as a check, not a wait: on the common grow it returns on the
+		// first poll and announcing a wait that did not happen is its own small
+		// lie.
+		fmt.Println("  Checking the slice is ready...")
+		if err := waitForSliceReady(m.Slice.Name); err != nil {
+			return fmt.Errorf("slice did not become ready after the grow: %w", err)
+		}
+		return nil
 	}
 
 	return fmt.Errorf("unexpected verdict: %s", d.Verdict)
