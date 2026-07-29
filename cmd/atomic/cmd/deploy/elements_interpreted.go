@@ -116,8 +116,15 @@ func DeployInterpretedElement(el Element, digest string, quiet bool) error {
 		if f.Trigger == "queue" {
 			triggers = []TriggerSpec{{Type: "queue", Source: f.Method, Method: "queue", PollMS: 500, MaxRetry: 3}}
 		}
-		serr := sendSourceToOperator(name, method, lg.label, f.Auth, el.Name,
-			f.Stream, f.Secrets, archivePath, userSrc, triggers, digest)
+		serr := sendSourceToOperator(FuncArtifact{
+			Name: name, Method: method, Language: lg.label, Auth: f.Auth,
+			Element: el.Name, Stream: f.Stream, Secrets: f.Secrets,
+			Triggers: triggers, Digest: digest,
+			SourcePath: archivePath, UserSourcePath: userSrc,
+			// The same two facts the wrapper was just rendered from, so the slice
+			// can render it itself on a restore (#PLATFORM-CORE-OPERATOR-5JPT4H).
+			SourceModule: sourceModule, EntryFunc: f.SentinelName,
+		})
 		os.Remove(archivePath) // #nosec G104
 		if serr != nil {
 			if firstErr == nil {

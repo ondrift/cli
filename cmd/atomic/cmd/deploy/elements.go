@@ -242,8 +242,14 @@ func DeployGoElement(el Element, digest string, quiet bool) error {
 		if f.Trigger == "queue" {
 			triggers = []TriggerSpec{{Type: "queue", Source: f.Method, Method: "queue", PollMS: 500, MaxRetry: 3}}
 		}
-		return sendSourceToOperator(name, method, "native", f.Auth, el.Name,
-			f.Stream, f.Secrets, bin, userSrc, triggers, digest)
+		// No SourceModule/EntryFunc: a native function's entry point is the built
+		// binary, which the runtime cannot generate and this path must supply.
+		return sendSourceToOperator(FuncArtifact{
+			Name: name, Method: method, Language: "native", Auth: f.Auth,
+			Element: el.Name, Stream: f.Stream, Secrets: f.Secrets,
+			Triggers: triggers, Digest: digest,
+			SourcePath: bin, UserSourcePath: userSrc,
+		})
 	}
 
 	results := make([]error, len(el.Funcs))

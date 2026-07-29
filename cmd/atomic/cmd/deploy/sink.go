@@ -33,6 +33,21 @@ type FuncArtifact struct {
 	Digest                                        string
 	SourcePath                                    string
 	UserSourcePath                                string
+	// SourceModule and EntryFunc are what the SLICE needs to generate this
+	// function's entry-point wrapper itself (#PLATFORM-CORE-OPERATOR-5JPT4H):
+	// the user's module as their language imports it, and the annotated callable
+	// inside it.
+	//
+	// The CLI still generates the wrapper today, so these are additional rather
+	// than a replacement. They matter for a snapshot RESTORE, which redeploys the
+	// user's original source — an archive that deliberately contains no
+	// Drift-generated files, and therefore no wrapper. Recording them lets the
+	// runtime rebuild it instead of the restore failing.
+	//
+	// Empty for compiled languages: their entry point is a built binary, which
+	// the runtime cannot produce and the client must supply.
+	SourceModule string
+	EntryFunc    string
 }
 
 // SlotSink consumes a built function. Default: upload to the operator. Local:
@@ -45,13 +60,12 @@ var slotSink SlotSink = operatorSink
 // active sink so `drift project run` can redirect to local disk without
 // touching any build logic. (Name kept for the call sites; it no longer always
 // talks to the operator.)
-func sendSourceToOperator(name, method, language, auth, element, stream string, secrets []string, sourcePath, userSourcePath string, triggers []TriggerSpec, digest string) error {
-	return slotSink(FuncArtifact{
-		Name: name, Method: method, Language: language, Auth: auth,
-		Element: element, Stream: stream, Secrets: secrets,
-		Triggers: triggers, Digest: digest,
-		SourcePath: sourcePath, UserSourcePath: userSourcePath,
-	})
+// It takes the artifact it was already constructing. It used to take eleven
+// consecutive parameters, nine of them strings, and the wrapper facts would have
+// made thirteen — at which point transposing two arguments still compiles and
+// quietly deploys a function under the wrong element.
+func sendSourceToOperator(a FuncArtifact) error {
+	return slotSink(a)
 }
 
 // StageElementsLocally builds every function across `elements` and writes the

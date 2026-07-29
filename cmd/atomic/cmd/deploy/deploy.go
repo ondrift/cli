@@ -427,6 +427,10 @@ func operatorSink(a FuncArtifact) error {
 		"secrets":  secrets,
 		"triggers": triggers,
 		"digest":   digest,
+		// Lets the slice regenerate the entry-point wrapper on a snapshot restore
+		// (#PLATFORM-CORE-OPERATOR-5JPT4H). Empty for compiled languages.
+		"source_module": a.SourceModule,
+		"entry_func":    a.EntryFunc,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
@@ -653,7 +657,12 @@ func DeployFolder(folder, element string, quiet bool) error {
 		digest = ""
 	}
 
-	if err := sendSourceToOperator(name, method, language, auth, element, stream, secrets, sourcePath, userSourcePath, triggers, digest); err != nil {
+	if err := sendSourceToOperator(FuncArtifact{
+		Name: name, Method: method, Language: language, Auth: auth,
+		Element: element, Stream: stream, Secrets: secrets,
+		Triggers: triggers, Digest: digest,
+		SourcePath: sourcePath, UserSourcePath: userSourcePath,
+	}); err != nil {
 		return err
 	}
 
