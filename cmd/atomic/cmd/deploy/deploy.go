@@ -554,7 +554,7 @@ func DeployFolder(folder, element string, quiet bool) error {
 		name = filepath.Base(absFolder)
 	}
 
-	language, _, err := atomic_common.DetectLanguage(absFolder)
+	language, sourceFile, err := atomic_common.DetectLanguage(absFolder)
 	if err != nil {
 		return fmt.Errorf("failed to detect language: %w", err)
 	}
@@ -657,11 +657,24 @@ func DeployFolder(folder, element string, quiet bool) error {
 		digest = ""
 	}
 
+	// The two facts the SLICE needs to render this function's entry-point
+	// wrapper itself (#PLATFORM-CORE-OPERATOR-5JPT4H), derived from the same two
+	// helpers the builders use rather than restated: DetectLanguage for the
+	// source file, FuncNameForLanguage for the callable. Empty for compiled
+	// languages, whose entry point is a binary the runtime cannot produce.
+	var wrapSourceModule, wrapEntryFunc string
+	switch language {
+	case "python", "node", "ruby", "php":
+		wrapSourceModule = strings.TrimSuffix(filepath.Base(sourceFile), filepath.Ext(sourceFile))
+		wrapEntryFunc = atomic_common.FuncNameForLanguage(method, name, language)
+	}
+
 	if err := sendSourceToOperator(FuncArtifact{
 		Name: name, Method: method, Language: language, Auth: auth,
 		Element: element, Stream: stream, Secrets: secrets,
 		Triggers: triggers, Digest: digest,
 		SourcePath: sourcePath, UserSourcePath: userSourcePath,
+		SourceModule: wrapSourceModule, EntryFunc: wrapEntryFunc,
 	}); err != nil {
 		return err
 	}
