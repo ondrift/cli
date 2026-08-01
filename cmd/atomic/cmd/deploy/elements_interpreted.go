@@ -116,6 +116,11 @@ func DeployInterpretedElement(el Element, digest string, quiet bool) error {
 		if f.Trigger == "queue" {
 			triggers = []TriggerSpec{{Type: "queue", Source: f.Method, Method: "queue", PollMS: 500, MaxRetry: 3}}
 		}
+		// A Driftfile `cron:` is additive — the function keeps its HTTP route
+		// and also fires on schedule, so the trigger carries its own method.
+		if sched := scheduleTriggerFor(name, method); sched != nil {
+			triggers = append(triggers, sched...)
+		}
 		serr := sendSourceToOperator(FuncArtifact{
 			Name: name, Method: method, Language: lg.label, Auth: f.Auth,
 			Element: el.Name, Stream: f.Stream, Secrets: f.Secrets,

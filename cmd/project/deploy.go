@@ -491,6 +491,12 @@ func checkRouteCollisions(m *Manifest) error {
 }
 
 func applyAtomic(m *Manifest, out io.Writer) error {
+	// Publish the Driftfile's declared schedules before anything ships. Every
+	// deploy path reads them while building its artifact, and the operator —
+	// not the slice — is what registers them, so they pass the scheduled-job
+	// envelope on the way in.
+	atomic_cmd.SetDeclaredSchedules(declaredSchedules(m))
+
 	// Element layout: if atomic/ holds a Default element (flat *.go) or any
 	// multi-function element, deploy via the element path. A pure legacy
 	// folder-per-function tree falls through to the unchanged path below.

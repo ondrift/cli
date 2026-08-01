@@ -143,22 +143,13 @@ func ManifestToSliceConfig(m *Manifest) (SliceConfig, error) {
 		cfg.Atomic.MaxNumberOfFunctions = len(m.Slice.Atomic.Functions)
 	}
 
-	// Scheduled-job count comes from the source `@atomic cron=` directives —
-	// the authoritative place a schedule is declared — not the vestigial
-	// Driftfile functions[].cron field. Falls back to that field only when
-	// source isn't readable (manifest preflight before deploy), mirroring
-	// the function-count fallback above.
-	if sc, scErr := CountScheduledFunctions(m); scErr == nil {
-		cfg.Atomic.MaxNumberOfScheduledJobs = sc
-	} else {
-		scheduled := 0
-		for _, fn := range m.Slice.Atomic.Functions {
-			if fn.Cron != "" {
-				scheduled++
-			}
-		}
-		cfg.Atomic.MaxNumberOfScheduledJobs = scheduled
-	}
+	// Scheduled-job count spans BOTH declaration sites — `atomic.functions[].cron`
+	// in the Driftfile and `@atomic cron=` in source. CountScheduledFunctions
+	// counts the Driftfile half without touching the tree, so even a preflight
+	// that cannot read source still sizes the envelope for every declared
+	// schedule; its error return carries that partial count rather than zero.
+	sc, _ := CountScheduledFunctions(m)
+	cfg.Atomic.MaxNumberOfScheduledJobs = sc
 	if v := m.Slice.Atomic.DeployHistory; v > 0 {
 		cfg.Atomic.MaxNumberOfDeploymentsInHistory = v
 	}

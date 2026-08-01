@@ -591,6 +591,10 @@ func DeployFolder(folder, element string, quiet bool) error {
 		return fmt.Errorf("failed to parse schedule comments: %w", err)
 	}
 	triggers = append(triggers, schedules...)
+	// A Driftfile `cron:` declares the same thing as a `// drift:schedule`
+	// comment, from the other end. Both land here; the Driftfile one carries
+	// the function's own method because it is additive to the HTTP route.
+	triggers = append(triggers, scheduleTriggerFor(name, method)...)
 
 	// Auto-register the @atomic queue=NAME annotation as a TriggerSpec so
 	// the trigger registry binds the queue to this function. Manual

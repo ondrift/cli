@@ -242,6 +242,12 @@ func DeployGoElement(el Element, digest string, quiet bool) error {
 		if f.Trigger == "queue" {
 			triggers = []TriggerSpec{{Type: "queue", Source: f.Method, Method: "queue", PollMS: 500, MaxRetry: 3}}
 		}
+		// A Driftfile `cron:` is additive — the function keeps its HTTP route
+		// and also fires on schedule, so the trigger carries the function's own
+		// method.
+		if sched := scheduleTriggerFor(name, method); sched != nil {
+			triggers = append(triggers, sched...)
+		}
 		// No SourceModule/EntryFunc: a native function's entry point is the built
 		// binary, which the runtime cannot generate and this path must supply.
 		return sendSourceToOperator(FuncArtifact{
